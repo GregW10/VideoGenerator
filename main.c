@@ -19,40 +19,84 @@
 #define UND_TIME_MAX_LEN 25 // exact length of str. returned by get_und_time() func. (not including '\0')
 #define PIX_OFFSET 54 // required starting address of the pixel offset in the BMP images
 
+void delegate_flags(const char *arg, bool *del, bool *tim, bool *sz);
+
 int main(int argc, char **argv) {
-    if (argc > 5) {
+    time_t beg_time = time(NULL);
+    if (argc > 7 || argc < 2) {
         fprintf(stderr, "Invalid number of command-line arguments provided.\n");
         return -1;
     }
-    const char *fr = *(argv + 2);
-    if (!is_numeric(*(argv + 2))) {
-        fprintf(stderr, "Third argument (frame rate) is not numeric:\n%s\n", *(argv + 2));
-        while (*fr) {
-            if (!is_num(*fr++)) {
-                fprintf(stderr, "%c", '^');
-                continue;
-            }
-            fprintf(stderr, "~");
-        }
-        return -1;
-    }
-    long long rate = 0;
-    while (*fr) {
-        rate *= 10;
-        rate += *fr++ - 48;
-    }
-    const char *cmpr = *(argv + 3);
-    if (strcmp_c(*(argv+3), "4:4:4") != 0 && strcmp_c(*(argv+3), "4:2:2") != 0 && strcmp_c(*(argv+3), "4:2:0") != 0) {
-        fprintf(stderr, "Invalid YUV format (only 4:4:4, 4:2:2 and 4:2:0 are possible).\n");
-        return -1;
-    }
     bool delete = false;
-    if (argc == 5) {
-        if (strcmp_c(*(argv + 4), "delete") != 0) {
-            fprintf(stderr, "If provided, 5th argument must be \"delete\". Argument provided was: \"%s\"\n", *(argv+4));
-            return -1;
+    bool timed = false;
+    bool give_size = false;
+    long long rate = 30;
+    const char *cmpr = "4:4:4";
+    bool cmpr_set = false;
+    if (argc >= 3) {
+        const char *fr = *(argv + 2);
+        if (!is_numeric(fr)) {
+            if (strcmp_c(fr, "4:4:4") != 0 && strcmp_c(fr, "4:2:2") != 0 && strcmp_c(fr, "4:2:0") != 0 &&
+                strcmp_c(fr, "4:1:1") != 0) {
+                if (strcmp_c(fr, "-delete") != 0 && strcmp_c(fr, "-time") != 0 && strcmp_c(fr, "-size") != 0) {
+                    fprintf(stderr, "Third argument is not numeric:\n%s\n", *(argv + 2));
+                    while (*fr) {
+                        if (!is_num(*fr++)) {
+                            fprintf(stderr, "%c", '^');
+                            continue;
+                        }
+                        fprintf(stderr, "~");
+                    }
+                    fprintf(stderr, "\n... (for frame rate), nor is a valid colour space or flag.");
+                    return -1;
+                }
+                else {
+                    delegate_flags(*(argv + 2), &delete, &timed, &give_size);
+                }
+            }
+            else {
+                cmpr = *(argv + 2);
+                cmpr_set = true;
+            }
         }
-        delete = true;
+        else {
+            rate = 0;
+            while (*fr) {
+                rate *= 10;
+                rate += *fr++ - 48;
+            }
+        }
+    }
+    if (argc >= 4) {
+        if (!cmpr_set) {
+            if (strcmp_c(*(argv + 3), "4:4:4") != 0 && strcmp_c(*(argv + 3), "4:2:2") != 0 &&
+                strcmp_c(*(argv + 3), "4:2:0") != 0 && strcmp_c(*(argv + 3), "4:1:1") != 0) {
+                if (strcmp_c(*(argv + 3), "-delete") != 0 && strcmp_c(*(argv + 3), "-time") != 0 &&
+                    strcmp_c(*(argv + 3), "-size") != 0) {
+                    fprintf(stderr, "Invalid 4th argument: invalid YUV colour space (only 4:4:4, 4:2:2, 4:2:0 and 4:1:1"
+                                    " are possible) and invalid flag.\n");
+                    return -1;
+                }
+                else {
+                    delegate_flags(*(argv + 3), &delete, &timed, &give_size);
+                }
+            }
+            else {
+                cmpr = *(argv + 3);
+            }
+        }
+        else {
+            delegate_flags(*(argv + 3), &delete, &timed, &give_size);
+        }
+    }
+    if (argc >= 5) { // repeated flags are simply ignored (no harm done!)
+        delegate_flags(*(argv + 4), &delete, &timed, &give_size);
+        if (argc >= 6) {
+            delegate_flags(*(argv + 5), &delete, &timed, &give_size);
+            if (argc == 7) {
+                delegate_flags(*(argv + 6), &delete, &timed, &give_size);
+            }
+        }
     }
 #ifdef _WIN32
     DWORD fileAttr = GetFileAttributesA(*(argv + 1));
@@ -194,6 +238,7 @@ int main(int argc, char **argv) {
         while (*arr) {
             fputs(frame, vid); // each frame starts with "FRAME\n"
             bmp = fopen(*arr++, "rb");
+            fseek(bmp, PIX_OFFSET, SEEK_SET); // seek to start of pixel array in BMP
             for (size_t i = 0; i < info_header.bmp_height; ++i) { // loop for writing all Y component bytes to video
                 for (size_t j = 0; j < info_header.bmp_width; ++j) {
                     fread(&col, sizeof(char), 3, bmp); // get RGB from bitmap and...
@@ -201,7 +246,7 @@ int main(int argc, char **argv) {
                 }
                 fseek(bmp, 3 + padding, SEEK_CUR); // seek to next row
             }
-            fseek(bmp, 0, SEEK_SET); // seek to beginning of bmp file (still missing Cb and Cr planes)
+            fseek(bmp, PIX_OFFSET, SEEK_SET); // seek to beginning of pixel array again (still missing Cb and Cr planes)
             for (size_t i = 0; i < info_header.bmp_height; ++i) { // write Cb plane
                 for (size_t j = 0; j < info_header.bmp_width; ++j) {
                     fread(&col, sizeof(char), 3, bmp);
@@ -209,7 +254,7 @@ int main(int argc, char **argv) {
                 }
                 fseek(bmp, 3 + padding, SEEK_CUR);
             }
-            fseek(bmp, 0, SEEK_SET); // still missing Cr plane
+            fseek(bmp, PIX_OFFSET, SEEK_SET); // still missing Cr plane
             for (size_t i = 0; i < info_header.bmp_height; ++i) { // write Cr plane
                 for (size_t j = 0; j < info_header.bmp_width; ++j) {
                     fread(&col, sizeof(char), 3, bmp);
@@ -226,6 +271,7 @@ int main(int argc, char **argv) {
     else { // C420
 
     }
+    size_t y4m_file_size = ftell(vid);
     fclose(vid);
     arr = array;
     if (delete) { // more efficient to create separate loop, rather than re-evaluating condition within above loop
@@ -240,6 +286,30 @@ int main(int argc, char **argv) {
     }
     free((char *) yuv_h);
     free_array(array);
-    printf("At end.\n");
+    if (give_size) {
+        printf("File size: %zu bytes\n", y4m_file_size);
+    }
+    if (timed) {
+        printf("Elapsed time: %zu seconds\n", (size_t) (time(NULL) - beg_time));
+    }
     return 0;
+}
+
+void delegate_flags(const char *arg, bool *del, bool *tim, bool *sz) {
+    if (strcmp_c(arg, "-delete") == 0) {
+        *del = true;
+    }
+    else if (strcmp_c(arg, "-time") == 0) {
+        *tim = true;
+    }
+    else if (strcmp_c(arg, "-size") == 0) {
+        *sz = true;
+    }
+    else {
+        fprintf(stderr, "Invalid flag: \"%s\"\nPossible flags are:\n\"-delete\" "
+                        "(to delete all bmp files used to generate the video),\n\"-time\" "
+                        "(to show the length of time taken to generate the video) and\n\"-size\" "
+                        "(to give the generated video's file size).\n", arg);
+        exit(-1);
+    }
 }

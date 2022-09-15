@@ -43,7 +43,7 @@ typedef struct {
     unsigned int clr_palette; // can be zero
     unsigned int important_clrs; // can be zero
 } bmp_info_header;
-
+// no NULL checks in the bottom functions to reduce comp. time (UB if NULL passed)
 static inline unsigned char get_Y(const colour *col) { // get Luma (luminance) component from RGB values
     long double ld = 0.299l*((long double) col->r) + 0.587l*((long double) col->g) + 0.114l*((long double) col->b);
     unsigned char retval = (unsigned char) ld;
@@ -264,7 +264,6 @@ const char *get_und_time() {
     *(ptr + 19) = 's'; // replace last underscore
     char *prev = ptr + 23;
     char *end = ptr + 24;
-    printf("*prev: %c, *end: %c\n", *prev, *end);
     while (*prev != 's') { // shift year forward by one character to make space for new underscore
         *end-- = *prev--;
     }
@@ -274,7 +273,6 @@ const char *get_und_time() {
             *ptr = '_';
         ++ptr;
     }
-    // *--ptr = 0; // ctime returned string ends in a newline '\n'
     return org;
 }
 
@@ -345,8 +343,9 @@ const char *yuv_header(unsigned short width, unsigned short height, long long fr
     if (width == 0 || height == 0 || fr_num <= 0 || fr_denom <= 0 || (interlacing != 'p' && interlacing != 't' &&
     interlacing != 'b' && interlacing != 'm') || pix_asp_ratio_num <= 0 || pix_asp_ratio_denom <= 0 || clr_space == NULL
     || *clr_space == 0 || (strcmp_c(clr_space, "C420mpeg2") != 0 && strcmp_c(clr_space, "C444alpha") != 0 &&
-    strcmp_c(clr_space, "C420jpeg") != 0 && strcmp_c(clr_space, "C420paldv") != 0 && strcmp_c(clr_space, "C420") != 0 &&
-    strcmp_c(clr_space, "C422") != 0 && strcmp_c(clr_space, "C444") && strcmp_c(clr_space, "Cmono") != 0)) {
+    strcmp_c(clr_space, "C420jpeg") != 0 && strcmp_c(clr_space, "C420paldv") != 0 && strcmp_c(clr_space, "C411") != 0
+    && strcmp_c(clr_space, "C420") != 0 && strcmp_c(clr_space, "C422") != 0 && strcmp_c(clr_space, "C444")
+    && strcmp_c(clr_space, "Cmono") != 0)) {
         errno = EINVAL;
         return NULL;
     }
