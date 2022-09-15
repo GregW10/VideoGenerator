@@ -17,6 +17,12 @@ typedef enum {
 } bool;
 
 typedef struct {
+    unsigned char b;
+    unsigned char g;
+    unsigned char r;
+} colour;
+
+typedef struct {
     unsigned char bm[2]; // should always be chars 'B' and 'M'
     unsigned int fileSize;
     unsigned short reserved1;
@@ -37,6 +43,33 @@ typedef struct {
     unsigned int clr_palette; // can be zero
     unsigned int important_clrs; // can be zero
 } bmp_info_header;
+
+static inline unsigned char get_Y(const colour *col) { // get Luma (luminance) component from RGB values
+    long double ld = 0.299l*((long double) col->r) + 0.587l*((long double) col->g) + 0.114l*((long double) col->b);
+    unsigned char retval = (unsigned char) ld;
+    if (ld - retval >= 0.5) { // to avoid the function call to round() (in math.h)
+        ++retval;
+    }
+    return retval;
+}
+
+static inline unsigned char get_Cb(const colour *col) { // get Cb (blue chrominance) component from RGB values
+    long double ld = -0.169l*((long double)col->r) + -0.331l*((long double)col->g) + 0.500l*((long double)col->b) + 128;
+    unsigned char retval = (unsigned char) ld;
+    if (ld - retval >= 0.5) { // to avoid the function call to round() (in math.h)
+        ++retval;
+    }
+    return retval;
+}
+
+static inline unsigned char get_Cr(const colour *col) { // get Cr (red chrominance) component from RGB values
+    long double ld = 0.500l*((long double) col->r) - 0.419l*((long double) col->g) - 0.081l*((long double)col->b) + 128;
+    unsigned char retval = (unsigned char) ld;
+    if (ld - retval >= 0.5) { // to avoid the function call to round() (in math.h)
+        ++retval;
+    }
+    return retval;
+}
 
 void zero(void *str, size_t n) {
     if (str == NULL)
@@ -226,12 +259,22 @@ const char *get_und_time() {
     time_t t = time(NULL);
     char *ptr = ctime(&t);
     const char *org = ptr;
+    *(ptr + 13) = 'h'; // replace first colon
+    *(ptr + 16) = 'm'; // replace second colon
+    *(ptr + 19) = 's'; // replace last underscore
+    char *prev = ptr + 23;
+    char *end = ptr + 24;
+    printf("*prev: %c, *end: %c\n", *prev, *end);
+    while (*prev != 's') { // shift year forward by one character to make space for new underscore
+        *end-- = *prev--;
+    }
+    *end = '_';
     while (*ptr) {
         if (*ptr == ' ')
             *ptr = '_';
         ++ptr;
     }
-    *--ptr = 0; // ctime returned string ends in a newline '\n'
+    // *--ptr = 0; // ctime returned string ends in a newline '\n'
     return org;
 }
 
@@ -268,7 +311,7 @@ char *append_integer(char *str, long long num) {
     return ptr;
 }
 
-bool is_normal_ascii(const char *str) {
+bool is_normal_ascii(const char *str) { // checks for 'normal' ASCII characters
     if (str == NULL || *str == 0) {
         return false;
     }
@@ -309,11 +352,11 @@ const char *yuv_header(unsigned short width, unsigned short height, long long fr
     }
     size_t xlen = strlen_c(x_param); // will just be zero if x_param is NULL
     bool include_x = true;
-    if (x_param == NULL || xlen > 200 || !is_normal_ascii(x_param)) { // x_param is optional
+    if (xlen == 0 || xlen > 200 || !is_normal_ascii(x_param)) { // x_param is optional
         include_x = false;
     }
-    size_t len = 37 + strlen_c(clr_space) + (include_x ? xlen : 0);  // max. len. of header
-    char *str = malloc(sizeof(char)*(len));
+    size_t len = 112 + strlen_c(clr_space) + (include_x ? xlen : 0);  // max. len. of header
+    char *str = malloc(sizeof(char)*len);
     zero(str, sizeof(char)*len);
     strcpy_c(str, "YUV4MPEG2 W");
     append_integer(str, width);
@@ -331,11 +374,8 @@ const char *yuv_header(unsigned short width, unsigned short height, long long fr
     append_integer(str, pix_asp_ratio_denom);
     chrcat_c(str, ' ');
     strcat_c(str, clr_space);
-    chrcat_c(str, ' ');
     if (include_x) {
-        if (*x_param != 'X') {
-            chrcat_c(str, 'X');
-        }
+        strcat_c(str, " X"); // x_param passed should not begin with X, as this is taken care of here
         strcat_c(str, x_param);
     }
     chrcat_c(str, '\n'); // is necessary
