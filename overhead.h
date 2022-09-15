@@ -2,6 +2,14 @@
 // created by Gregor Hartl Watters on 13/09/2022
 //
 
+#include <stdarg.h>
+#include <time.h>
+#include <errno.h>
+
+#ifndef errno
+extern int errno;
+#endif
+
 #pragma pack(push, 1)
 
 typedef enum {
@@ -29,6 +37,15 @@ typedef struct {
     unsigned int clr_palette; // can be zero
     unsigned int important_clrs; // can be zero
 } bmp_info_header;
+
+void zero(void *str, size_t n) {
+    if (str == NULL)
+        return;
+    char *ptr = str;
+    while (n --> 0) {
+        *ptr++ = 0;
+    }
+}
 
 size_t strlen_c(const char *str) {
     if (str == NULL || *str == 0)
@@ -71,7 +88,7 @@ int alfcmp_c(const char *restrict str1, const char *str2) { // treats upper and 
                     goto inc;
                 }
                 if (*str2 >= 65 && *str2 <= 97) {
-                    return *str1 - *str2 + 32;
+                    return *str1 - *str2 - 32;
                 }
             }
             return *str1 - *str2;
@@ -105,6 +122,47 @@ char *strcat_c(char *restrict dst, const char *src) {
     return org;
 }
 
+char *chrcat_c(char *restrict dst, char ch) {
+    if (dst == NULL || ch == 0) {
+        return dst;
+    }
+    if (*dst == 0) {
+        *dst = ch;
+        goto end;
+    }
+    while (*++dst);
+    *dst = ch;
+    end:
+    *++dst = 0;
+    return dst;
+}
+
+bool endswith(const char *str, const char *suffix) {
+    if (str == NULL || suffix == NULL) {
+        return false;
+    }
+    if ((*str == 0 && *suffix == 0) || *suffix == 0) {
+        return true;
+    }
+    size_t str_len = strlen_c(str);
+    size_t suff_len = strlen_c(suffix);
+    if (suff_len > str_len) {
+        return false;
+    }
+    if (str_len == suff_len) {
+        if (strcmp_c(str, suffix) == 0) {
+            return true;
+        }
+        return false;
+    }
+    const char *start = str + str_len - suff_len;
+    while (*start) {
+        if (*start++ != *suffix++)
+            return false;
+    }
+    return true;
+}
+
 void alphabetical_sort(const char **array) { // sorts an array of strings alphabetically - must end in NULL
     if (array == NULL || *array == NULL || *(array + 1) == NULL)
         return;
@@ -113,28 +171,22 @@ void alphabetical_sort(const char **array) { // sorts an array of strings alphab
     int comp;
     const char **prev;
     const char **arr;
-    size_t count = 1;
     while (!sorted) {
         arr = array;
         prev = arr++;
-        printf("Entrance number: %d\n", count++);
         sorted = true;
         while (*arr) {
             comp = alfcmp_c(*prev, *arr);
-            printf("*prev = %s, *array = %s, comp = %d\n", *prev, *arr, comp);
             if (comp > 0) {
                 sorted = false;
                 temp = *prev;
                 *prev = *arr;
                 *arr = temp;
-                printf("switch\n");
             }
             ++prev;
             ++arr;
-            printf("first element: *array: %s\n", *array);
         }
     }
-    printf("End: %s\n", *array);
 }
 
 void print_array(const char *const *array) { // must end in NULL
@@ -146,4 +198,147 @@ void print_array(const char *const *array) { // must end in NULL
     }
 }
 
+void free_array(const char **array) {
+    if (array == NULL) {
+        return;
+    }
+    const char **ptr = array;
+    while (*ptr) {
+        free((char *) *ptr++);
+    }
+    free((char *) *ptr); // frees final NULL
+    free(array); // free array of pointers
+}
+
+void free_ptrs(size_t num, ...) {
+    if (num == 0) {
+        return;
+    }
+    va_list ptr;
+    va_start(ptr, num);
+    for (size_t i = 0; i < num; ++i) {
+        free((char *) (va_arg(ptr, const char *)));
+    }
+    va_end(ptr);
+}
+
+const char *get_und_time() {
+    time_t t = time(NULL);
+    char *ptr = ctime(&t);
+    const char *org = ptr;
+    while (*ptr) {
+        if (*ptr == ' ')
+            *ptr = '_';
+        ++ptr;
+    }
+    *--ptr = 0; // ctime returned string ends in a newline '\n'
+    return org;
+}
+
+char *append_integer(char *str, long long num) {
+    if (str == NULL) {
+        return str;
+    }
+    if (num == 0) {
+        strcat_c(str, "0");
+        return str;
+    }
+    if (num < 0) {
+        strcat_c(str, "-");
+        num = -num;
+    }
+    char *ptr = str;
+    size_t reverse = 0; // get reverse of the number
+    char n = 0;
+    while (num > 0) {
+        reverse *= 10;
+        reverse += num % 10;
+        num /= 10;
+        ++n;
+    }
+    if (*str == 0)
+        goto start;
+    while (*++str);
+    start:
+    while (n --> 0) {
+        *str++ = ((char) (reverse % 10)) + 48; // get ASCII char
+        reverse /= 10;
+    }
+    *str = 0;
+    return ptr;
+}
+
+bool is_normal_ascii(const char *str) {
+    if (str == NULL || *str == 0) {
+        return false;
+    }
+    while (*str) {
+        if (*str < 33 || *str == 127)
+            return false;
+        ++str;
+    }
+    return true;
+}
+
+static inline bool is_num(char c) {
+    return c >= 48 && c <= 57;
+}
+
+bool is_numeric(const char *str) {
+    if (str == NULL || *str == 0) {
+        return false;
+    }
+    while (*str) {
+        if (!is_num(*str++)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+const char *yuv_header(unsigned short width, unsigned short height, long long fr_num,
+                       long long fr_denom, char interlacing, long long pix_asp_ratio_num,
+                       long long pix_asp_ratio_denom, const char *clr_space, const char *x_param) {
+    if (width == 0 || height == 0 || fr_num <= 0 || fr_denom <= 0 || (interlacing != 'p' && interlacing != 't' &&
+    interlacing != 'b' && interlacing != 'm') || pix_asp_ratio_num <= 0 || pix_asp_ratio_denom <= 0 || clr_space == NULL
+    || *clr_space == 0 || (strcmp_c(clr_space, "C420mpeg2") != 0 && strcmp_c(clr_space, "C444alpha") != 0 &&
+    strcmp_c(clr_space, "C420jpeg") != 0 && strcmp_c(clr_space, "C420paldv") != 0 && strcmp_c(clr_space, "C420") != 0 &&
+    strcmp_c(clr_space, "C422") != 0 && strcmp_c(clr_space, "C444") && strcmp_c(clr_space, "Cmono") != 0)) {
+        errno = EINVAL;
+        return NULL;
+    }
+    size_t xlen = strlen_c(x_param); // will just be zero if x_param is NULL
+    bool include_x = true;
+    if (x_param == NULL || xlen > 200 || !is_normal_ascii(x_param)) { // x_param is optional
+        include_x = false;
+    }
+    size_t len = 37 + strlen_c(clr_space) + (include_x ? xlen : 0);  // max. len. of header
+    char *str = malloc(sizeof(char)*(len));
+    zero(str, sizeof(char)*len);
+    strcpy_c(str, "YUV4MPEG2 W");
+    append_integer(str, width);
+    strcat_c(str, " H");
+    append_integer(str, height);
+    strcat_c(str, " F");
+    append_integer(str, fr_num);
+    chrcat_c(str, ':');
+    append_integer(str, fr_denom);
+    strcat_c(str, " I");
+    chrcat_c(str, interlacing);
+    strcat_c(str, " A");
+    append_integer(str, pix_asp_ratio_num);
+    chrcat_c(str, ':');
+    append_integer(str, pix_asp_ratio_denom);
+    chrcat_c(str, ' ');
+    strcat_c(str, clr_space);
+    chrcat_c(str, ' ');
+    if (include_x) {
+        if (*x_param != 'X') {
+            chrcat_c(str, 'X');
+        }
+        strcat_c(str, x_param);
+    }
+    chrcat_c(str, '\n'); // is necessary
+    return str;
+}
 #pragma pack(pop)
