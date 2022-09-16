@@ -204,22 +204,24 @@ int main(int argc, char **argv) {
         return -1;
     }
     fclose(bmp);
+    unsigned long width = info_header.bmp_width;
+    unsigned long height = info_header.bmp_height;
     unsigned char padding = PAD_24BPP(info_header.bmp_width);
     unsigned char lopped_off_w = 0; // cutting edge off images is required for clr sub-sampling other than C444 if the
     unsigned char lopped_off_h = 0; // width and height of the images are not a multiple of 4
     if (strcmp_c(clr_space, "C422") == 0 || strcmp_c(clr_space, "C420") == 0) {
         if (info_header.bmp_width % 2 != 0) {
-            --info_header.bmp_width;
+            --width;
             lopped_off_w = 1;
         }
-        term_if_zero(info_header.bmp_width);
+        term_if_zero(width);
     }
     if (strcmp_c(clr_space, "C420") == 0) {
         if (info_header.bmp_height % 2 != 0) {
-            --info_header.bmp_height;
+            --height;
             lopped_off_h = 1;
         }
-        term_if_zero(info_header.bmp_height);
+        term_if_zero(height);
     }
     if (strcmp_c(clr_space, "C411") == 0) {
         unsigned char rem = info_header.bmp_width % 4;
@@ -227,16 +229,17 @@ int main(int argc, char **argv) {
             if (info_header.bmp_width <= rem) {
                 term_if_zero(0);
             }
-            info_header.bmp_width -= (lopped_off_w = rem);
+            width -= (lopped_off_w = rem);
         }
     }
     const char *curr_time = get_und_time();
-    char *t = malloc(sizeof(char)*(UND_TIME_MAX_LEN + 12));
+    char t[sizeof(char)*(UND_TIME_MAX_LEN + 12)];
     strcpy_c(t, "CREATED_ON=");
     strcat_c(t, curr_time);
-    const char *yuv_h = yuv_header(info_header.bmp_width, info_header.bmp_height, rate, 1, 'p', 1, 1, clr_space, t);
-    free(t);
+    const char *yuv_h = yuv_header(width, height, rate, 1, 'p', 1, 1, clr_space, t);
     if (yuv_h == NULL) {
+        free(bmp_path);
+        free_array(array);
         fprintf(stderr, "Invalid parameters for YUV4MPEG2 file.\n");
         return -1;
     }
@@ -248,7 +251,8 @@ int main(int argc, char **argv) {
     strcat_c(vid_path, ".y4m");
     FILE *vid = fopen(vid_path, "wb");
     if (vid == NULL) {
-        fprintf(stderr, "Error opening video output path: %s\n", vid_path);
+        fprintf(stderr, "Error opening video output path: \"%s\"\n", vid_path);
+        perror("Error type");
         free_ptrs(2, vid_path, (char *) yuv_h);
         free_array(array);
         return -1;
@@ -259,9 +263,8 @@ int main(int argc, char **argv) {
     const char *frame = "FRAME\n";
     colour col = {0};
     long int start_offset = -((long) (info_header.bmp_width*3 + padding)); // same for all colour sub-sampling cases
-    long int repeat_offset;
+    long int repeat_offset = -((long) (2*info_header.bmp_width*3 + padding));
     if (strcmp_c(clr_space, "C444") == 0) { // uncompressed case - BMP pixel array size = FRAME pixel array size
-        repeat_offset = -((long) (2*info_header.bmp_width*3 + padding));
         while (*arr) { // lots of repetition, but better to avoid function calls
             fputs(frame, vid); // each frame starts with "FRAME\n"
             bmp = fopen(*arr++, "rb");
@@ -293,16 +296,16 @@ int main(int argc, char **argv) {
         }
     }
     else if (strcmp_c(clr_space, "C422") == 0) { // video frame size = (2/3) * BMP pixel array size
-        repeat_offset = -((long) (2*info_header.bmp_width*3 + padding));
-        padding += lopped_off_w;
+        repeat_offset = -((long) ((width + info_header.bmp_width)*3 + padding));
+        //padding += lopped_off_w;
         colour prev_col;
-        unsigned int half_width = info_header.bmp_width/2;
+        unsigned int half_width = width/2;
         while (*arr) {
             fputs(frame, vid);
             bmp = fopen(*arr++, "rb");
             fseek(bmp, start_offset, SEEK_END);
             for (size_t i = 0; i < info_header.bmp_height; ++i) {
-                for (size_t j = 0; j < info_header.bmp_width; ++j) {
+                for (size_t j = 0; j < width; ++j) {
                     fread(&col, sizeof(char), 3, bmp);
                     fputc(get_Y(&col), vid);
                 }
@@ -315,7 +318,7 @@ int main(int argc, char **argv) {
                     fread(&col, sizeof(char), 3, bmp);
                     fputc(get_Cb_avg2(&prev_col, &col), vid);
                 }
-                fseek(bmp, padding, SEEK_CUR);
+                fseek(bmp, repeat_offset, SEEK_CUR);
             }
             fseek(bmp, start_offset, SEEK_END);
             for (size_t i = 0; i < info_header.bmp_height; ++i) {
@@ -324,7 +327,7 @@ int main(int argc, char **argv) {
                     fread(&col, sizeof(char), 3, bmp);
                     fputc(get_Cr_avg2(&prev_col, &col), vid);
                 }
-                fseek(bmp, padding, SEEK_CUR);
+                fseek(bmp, repeat_offset, SEEK_CUR);
             }
             fclose(bmp);
         }
