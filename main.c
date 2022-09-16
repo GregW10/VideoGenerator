@@ -2,8 +2,6 @@
 // created by Gregor Hartl Watters on 13/09/2022
 //
 
-#include <stdio.h>
-#include <stdlib.h>
 #include "overhead.h"
 #ifdef _WIN32
 #include <windows.h>
@@ -19,7 +17,8 @@
 #define UND_TIME_MAX_LEN 25 // exact length of str. returned by get_und_time() func. (not including '\0')
 #define PIX_OFFSET 54 // required starting address of the pixel offset in the BMP images
 
-void delegate_flags(const char *arg, bool *del, bool *tim, bool *sz);
+static inline void delegate_flags(const char *arg, bool *del, bool *tim, bool *sz);
+static inline void term_if_zero(size_t val);
 
 int main(int argc, char **argv) {
     time_t beg_time = time(NULL);
@@ -109,7 +108,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 #else
-    struct stat buff{};
+    struct stat buff = {0};
     if (stat(*(argv + 1), &buff) == -1) {
         fprintf(stderr, "Invalid directory provided.\n");
         return -1;
@@ -200,11 +199,37 @@ int main(int argc, char **argv) {
     if (info_header.pixel_depth != 24 && info_header.pixel_depth != 32) {
         free_array(array);
         free(bmp_path);
-        fprintf(stderr, "Invalid BMP format, bit-depth expected: 24 bpp or 32 bpp, depth found = %i bpp\n",
+        fprintf(stderr, "Invalid BMP format, bit-depth expected: 24 bpp, depth found = %i bpp\n",
                 info_header.pixel_depth);
         return -1;
     }
     fclose(bmp);
+    unsigned char padding = PAD_24BPP(info_header.bmp_width);
+    unsigned char lopped_off_w = 0; // cutting edge off images is required for clr sub-sampling other than C444 if the
+    unsigned char lopped_off_h = 0; // width and height of the images are not a multiple of 4
+    if (strcmp_c(clr_space, "C422") == 0 || strcmp_c(clr_space, "C420") == 0) {
+        if (info_header.bmp_width % 2 != 0) {
+            --info_header.bmp_width;
+            lopped_off_w = 1;
+        }
+        term_if_zero(info_header.bmp_width);
+    }
+    if (strcmp_c(clr_space, "C420") == 0) {
+        if (info_header.bmp_height % 2 != 0) {
+            --info_header.bmp_height;
+            lopped_off_h = 1;
+        }
+        term_if_zero(info_header.bmp_height);
+    }
+    if (strcmp_c(clr_space, "C411") == 0) {
+        unsigned char rem = info_header.bmp_width % 4;
+        if (rem != 0) {
+            if (info_header.bmp_width <= rem) {
+                term_if_zero(0);
+            }
+            info_header.bmp_width -= (lopped_off_w = rem);
+        }
+    }
     const char *curr_time = get_und_time();
     char *t = malloc(sizeof(char)*(UND_TIME_MAX_LEN + 12));
     strcpy_c(t, "CREATED_ON=");
@@ -232,10 +257,8 @@ int main(int argc, char **argv) {
     fwrite(yuv_h, sizeof(char), strlen_c(yuv_h), vid);
     const char *frame = "FRAME\n";
     colour col = {0};
-    unsigned char padding = PAD_24BPP(info_header.bmp_width);
-    unsigned int max_h = info_header.bmp_height - 1;
     if (strcmp_c(clr_space, "C444") == 0) { // uncompressed case - BMP pixel array size = FRAME pixel array size
-        while (*arr) {
+        while (*arr) { // lots of repetition, but better to avoid function calls
             fputs(frame, vid); // each frame starts with "FRAME\n"
             bmp = fopen(*arr++, "rb");
             fseek(bmp, PIX_OFFSET, SEEK_SET); // seek to start of pixel array in BMP
@@ -244,7 +267,7 @@ int main(int argc, char **argv) {
                     fread(&col, sizeof(char), 3, bmp); // get RGB from bitmap and...
                     fputc(get_Y(&col), vid); // convert to Y and write to video file
                 }
-                fseek(bmp, 3 + padding, SEEK_CUR); // seek to next row
+                fseek(bmp, padding, SEEK_CUR); // seek to next row
             }
             fseek(bmp, PIX_OFFSET, SEEK_SET); // seek to beginning of pixel array again (still missing Cb and Cr planes)
             for (size_t i = 0; i < info_header.bmp_height; ++i) { // write Cb plane
@@ -252,7 +275,7 @@ int main(int argc, char **argv) {
                     fread(&col, sizeof(char), 3, bmp);
                     fputc(get_Cb(&col), vid);
                 }
-                fseek(bmp, 3 + padding, SEEK_CUR);
+                fseek(bmp, padding, SEEK_CUR);
             }
             fseek(bmp, PIX_OFFSET, SEEK_SET); // still missing Cr plane
             for (size_t i = 0; i < info_header.bmp_height; ++i) { // write Cr plane
@@ -260,15 +283,51 @@ int main(int argc, char **argv) {
                     fread(&col, sizeof(char), 3, bmp);
                     fputc(get_Cr(&col), vid);
                 }
-                fseek(bmp, 3 + padding, SEEK_CUR);
+                fseek(bmp, padding, SEEK_CUR);
             }
             fclose(bmp);
         }
     }
     else if (strcmp_c(clr_space, "C422") == 0) {
+        padding += lopped_off_w;
+        colour prev_col;
+        unsigned int half_width = info_header.bmp_width/2;
+        while (*arr) {
+            fputs(frame, vid);
+            bmp = fopen(*arr++, "rb");
+            fseek(bmp, PIX_OFFSET, SEEK_SET);
+            for (size_t i = 0; i < info_header.bmp_height; ++i) {
+                for (size_t j = 0; j < info_header.bmp_width; ++j) {
+                    fread(&col, sizeof(char), 3, bmp);
+                    fputc(get_Y(&col), vid);
+                }
+                fseek(bmp, padding, SEEK_CUR);
+            }
+            fseek(bmp, PIX_OFFSET, SEEK_SET);
+            for (size_t i = 0; i < info_header.bmp_height; ++i) {
+                for (size_t j = 0; j < half_width; ++j) {
+                    fread(&prev_col, sizeof(char), 3, bmp);
+                    fread(&col, sizeof(char), 3, bmp);
+                    fputc(get_Cb_avg2(&prev_col, &col), vid);
+                }
+                fseek(bmp, padding, SEEK_CUR);
+            }
+            fseek(bmp, PIX_OFFSET, SEEK_SET);
+            for (size_t i = 0; i < info_header.bmp_height; ++i) {
+                for (size_t j = 0; j < half_width; ++j) {
+                    fread(&prev_col, sizeof(char), 3, bmp);
+                    fread(&col, sizeof(char), 3, bmp);
+                    fputc(get_Cr_avg2(&prev_col, &col), vid);
+                }
+                fseek(bmp, padding, SEEK_CUR);
+            }
+            fclose(bmp);
+        }
+    }
+    else if (strcmp_c(clr_space, "C420") == 0) {
 
     }
-    else { // C420
+    else { // C411
 
     }
     size_t y4m_file_size = ftell(vid);
@@ -295,7 +354,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 
-void delegate_flags(const char *arg, bool *del, bool *tim, bool *sz) {
+static inline void delegate_flags(const char *arg, bool *del, bool *tim, bool *sz) {
     if (strcmp_c(arg, "-delete") == 0) {
         *del = true;
     }
@@ -310,6 +369,13 @@ void delegate_flags(const char *arg, bool *del, bool *tim, bool *sz) {
                         "(to delete all bmp files used to generate the video),\n\"-time\" "
                         "(to show the length of time taken to generate the video) and\n\"-size\" "
                         "(to give the generated video's file size).\n", arg);
+        exit(-1);
+    }
+}
+
+static inline void term_if_zero(size_t val) {
+    if (val == 0) {
+        fprintf(stderr, "Resultant video would have zero size. Provide larger bitmaps.\n");
         exit(-1);
     }
 }
