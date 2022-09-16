@@ -49,7 +49,7 @@ typedef struct {
 static inline unsigned char get_Y(const colour *col) { // get Luma (luminance) component from RGB values
     long double ld = 0.299l*((long double) col->r) + 0.587l*((long double) col->g) + 0.114l*((long double) col->b);
     unsigned char retval = (unsigned char) ld;
-    if (ld - retval >= 0.5) { // to avoid the function call to round() (in math.h)
+    if (ld - retval >= 0.5 && retval != 255) { // to avoid the function call to round() (in math.h)
         ++retval;
     }
     return retval;
@@ -58,7 +58,7 @@ static inline unsigned char get_Y(const colour *col) { // get Luma (luminance) c
 static inline unsigned char get_Cb(const colour *col) { // get Cb (blue chrominance) component from RGB values
     long double ld = -0.169l*((long double)col->r) - 0.331l*((long double)col->g) + 0.500l*((long double)col->b) + 128;
     unsigned char retval = (unsigned char) ld;
-    if (ld - retval >= 0.5) { // to avoid the function call to round() (in math.h)
+    if (ld - retval >= 0.5 && retval != 255) {
         ++retval;
     }
     return retval;
@@ -69,7 +69,7 @@ static inline unsigned char get_Cb_avg2(const colour *col, const colour *col2) {
     long double ld2 = -0.169l*((long double)col2->r)-0.331l*((long double)col2->g)+0.500l*((long double)col2->b) + 128;
     long double avg = ((ld + ld2)/2); // exactly the same as individ. taking avgs of R,G,&B and then doing calc.
     unsigned char retval = (unsigned char) avg;
-    if (avg - retval >= 0.5) { // to avoid the function call to round() (in math.h)
+    if (avg - retval >= 0.5 && retval != 255) {
         ++retval;
     }
     return retval;
@@ -78,7 +78,7 @@ static inline unsigned char get_Cb_avg2(const colour *col, const colour *col2) {
 static inline unsigned char get_Cr(const colour *col) { // get Cr (red chrominance) component from RGB values
     long double ld = 0.500l*((long double) col->r) - 0.419l*((long double) col->g) - 0.081l*((long double)col->b) + 128;
     unsigned char retval = (unsigned char) ld;
-    if (ld - retval >= 0.5) { // to avoid the function call to round() (in math.h)
+    if (ld - retval >= 0.5 && retval != 255) {
         ++retval;
     }
     return retval;
@@ -87,12 +87,19 @@ static inline unsigned char get_Cr(const colour *col) { // get Cr (red chrominan
 static inline unsigned char get_Cr_avg2(const colour *col, const colour *col2) { // Cb average from two RGB colours
     long double ld = 0.500l*((long double)col->r) - 0.419l*((long double)col->g) - 0.081l*((long double)col->b) + 128;
     long double ld2 = 0.500l*((long double)col2->r)-0.419l*((long double)col2->g)-0.081l*((long double)col2->b) + 128;
-    long double avg = ((ld + ld2)/2); // exactly the same as individ. taking avgs of R,G,&B and then doing calc.
+    long double avg = ((ld + ld2)/2);
     unsigned char retval = (unsigned char) avg;
-    if (avg - retval >= 0.5) { // to avoid the function call to round() (in math.h)
+    if (avg - retval >= 0.5 && retval != 255) {
         ++retval;
     }
     return retval;
+}
+
+static inline void print_colour(const colour *col) {
+    if (col == NULL) {
+        return;
+    }
+    printf("R: %i, G: %i, B: %i\n", col->r, col->g, col->b);
 }
 
 void zero(void *str, size_t n) {

@@ -255,55 +255,60 @@ int main(int argc, char **argv) {
     }
     free(vid_path);
     fwrite(yuv_h, sizeof(char), strlen_c(yuv_h), vid);
+    free((char *) yuv_h);
     const char *frame = "FRAME\n";
     colour col = {0};
+    long int start_offset = -((long) (info_header.bmp_width*3 + padding)); // same for all colour sub-sampling cases
+    long int repeat_offset;
     if (strcmp_c(clr_space, "C444") == 0) { // uncompressed case - BMP pixel array size = FRAME pixel array size
+        repeat_offset = -((long) (2*info_header.bmp_width*3 + padding));
         while (*arr) { // lots of repetition, but better to avoid function calls
             fputs(frame, vid); // each frame starts with "FRAME\n"
             bmp = fopen(*arr++, "rb");
-            fseek(bmp, PIX_OFFSET, SEEK_SET); // seek to start of pixel array in BMP
+            fseek(bmp, start_offset, SEEK_END); // seek to end row of pixel array in BMP
             for (size_t i = 0; i < info_header.bmp_height; ++i) { // loop for writing all Y component bytes to video
                 for (size_t j = 0; j < info_header.bmp_width; ++j) {
                     fread(&col, sizeof(char), 3, bmp); // get RGB from bitmap and...
                     fputc(get_Y(&col), vid); // convert to Y and write to video file
                 }
-                fseek(bmp, padding, SEEK_CUR); // seek to next row
+                fseek(bmp, repeat_offset, SEEK_CUR); // seek to previous row (y4m videos are inverted compared to BMPs)
             }
-            fseek(bmp, PIX_OFFSET, SEEK_SET); // seek to beginning of pixel array again (still missing Cb and Cr planes)
+            fseek(bmp, start_offset, SEEK_END); // seek to end row of pixel array again (still missing Cb and Cr planes)
             for (size_t i = 0; i < info_header.bmp_height; ++i) { // write Cb plane
                 for (size_t j = 0; j < info_header.bmp_width; ++j) {
                     fread(&col, sizeof(char), 3, bmp);
                     fputc(get_Cb(&col), vid);
                 }
-                fseek(bmp, padding, SEEK_CUR);
+                fseek(bmp, repeat_offset, SEEK_CUR);
             }
-            fseek(bmp, PIX_OFFSET, SEEK_SET); // still missing Cr plane
+            fseek(bmp, start_offset, SEEK_END); // still missing Cr plane
             for (size_t i = 0; i < info_header.bmp_height; ++i) { // write Cr plane
                 for (size_t j = 0; j < info_header.bmp_width; ++j) {
                     fread(&col, sizeof(char), 3, bmp);
                     fputc(get_Cr(&col), vid);
                 }
-                fseek(bmp, padding, SEEK_CUR);
+                fseek(bmp, repeat_offset, SEEK_CUR);
             }
             fclose(bmp);
         }
     }
-    else if (strcmp_c(clr_space, "C422") == 0) {
+    else if (strcmp_c(clr_space, "C422") == 0) { // video frame size = (2/3) * BMP pixel array size
+        repeat_offset = -((long) (2*info_header.bmp_width*3 + padding));
         padding += lopped_off_w;
         colour prev_col;
         unsigned int half_width = info_header.bmp_width/2;
         while (*arr) {
             fputs(frame, vid);
             bmp = fopen(*arr++, "rb");
-            fseek(bmp, PIX_OFFSET, SEEK_SET);
+            fseek(bmp, start_offset, SEEK_END);
             for (size_t i = 0; i < info_header.bmp_height; ++i) {
                 for (size_t j = 0; j < info_header.bmp_width; ++j) {
                     fread(&col, sizeof(char), 3, bmp);
                     fputc(get_Y(&col), vid);
                 }
-                fseek(bmp, padding, SEEK_CUR);
+                fseek(bmp, repeat_offset, SEEK_CUR);
             }
-            fseek(bmp, PIX_OFFSET, SEEK_SET);
+            fseek(bmp, start_offset, SEEK_END);
             for (size_t i = 0; i < info_header.bmp_height; ++i) {
                 for (size_t j = 0; j < half_width; ++j) {
                     fread(&prev_col, sizeof(char), 3, bmp);
@@ -312,7 +317,7 @@ int main(int argc, char **argv) {
                 }
                 fseek(bmp, padding, SEEK_CUR);
             }
-            fseek(bmp, PIX_OFFSET, SEEK_SET);
+            fseek(bmp, start_offset, SEEK_END);
             for (size_t i = 0; i < info_header.bmp_height; ++i) {
                 for (size_t j = 0; j < half_width; ++j) {
                     fread(&prev_col, sizeof(char), 3, bmp);
@@ -324,10 +329,10 @@ int main(int argc, char **argv) {
             fclose(bmp);
         }
     }
-    else if (strcmp_c(clr_space, "C420") == 0) {
+    else if (strcmp_c(clr_space, "C420") == 0) { // video frame size = (1/2) * BMP pixel array size
 
     }
-    else { // C411
+    else { // C411 - video frame size = (1/2) * BMP pixel array size
 
     }
     size_t y4m_file_size = ftell(vid);
@@ -336,20 +341,19 @@ int main(int argc, char **argv) {
     if (delete) { // more efficient to create separate loop, rather than re-evaluating condition within above loop
         while (*arr) {
             if (remove(*arr++) != 0) {
-                free((char *) yuv_h);
                 free_array(array);
                 fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *--arr);
                 return -1;
             }
         }
     }
-    free((char *) yuv_h);
     free_array(array);
     if (give_size) {
         printf("File size: %zu bytes\n", y4m_file_size);
     }
     if (timed) {
-        printf("Elapsed time: %zu seconds\n", (size_t) (time(NULL) - beg_time));
+        time_t total_time = time(NULL) - beg_time;
+        printf(total_time == 1 ? "Elapsed time: %zu second\n" : "Elapsed time: %zu seconds\n", (size_t) total_time);
     }
     return 0;
 }
