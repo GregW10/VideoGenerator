@@ -54,7 +54,8 @@ static inline unsigned char get_Y(const colour *col) { // get Luma (luminance) c
     }
     return retval;
 }
-
+// variadic arguments (<stdarg.h>) not used for the below functions in favour of computing time, since these functions
+// can easily be called billions of times during one execution of the program
 static inline unsigned char get_Cb(const colour *col) { // get Cb (blue chrominance) component from RGB values
     long double ld = -0.169l*((long double)col->r) - 0.331l*((long double)col->g) + 0.500l*((long double)col->b) + 128;
     unsigned char retval = (unsigned char) ld;
@@ -74,6 +75,19 @@ static inline unsigned char get_Cb_avg2(const colour *col, const colour *col2) {
     }
     return retval;
 }
+// average Cb value for four RGB colours:
+static inline unsigned char get_Cb_avg4(const colour *col, const colour *col2, const colour *col3, const colour *col4) {
+    long double ld = -0.169l*((long double)col->r) - 0.331l*((long double)col->g) + 0.500l*((long double)col->b) + 128;
+    long double ld2 = -0.169l*((long double)col2->r)-0.331l*((long double)col2->g)+0.500l*((long double)col2->b) + 128;
+    long double ld3 = -0.169l*((long double)col3->r)-0.331l*((long double)col3->g)+0.500l*((long double)col3->b) + 128;
+    long double ld4 = -0.169l*((long double)col4->r)-0.331l*((long double)col4->g)+0.500l*((long double)col4->b) + 128;
+    long double avg = ((ld + ld2 + ld3 + ld4)/4);
+    unsigned char retval = (unsigned char) avg;
+    if (avg - retval >= 0.5 && retval != 255) {
+        ++retval;
+    }
+    return retval;
+}
 
 static inline unsigned char get_Cr(const colour *col) { // get Cr (red chrominance) component from RGB values
     long double ld = 0.500l*((long double) col->r) - 0.419l*((long double) col->g) - 0.081l*((long double)col->b) + 128;
@@ -84,10 +98,23 @@ static inline unsigned char get_Cr(const colour *col) { // get Cr (red chrominan
     return retval;
 }
 
-static inline unsigned char get_Cr_avg2(const colour *col, const colour *col2) { // Cb average from two RGB colours
+static inline unsigned char get_Cr_avg2(const colour *col, const colour *col2) { // Cr average from two RGB colours
     long double ld = 0.500l*((long double)col->r) - 0.419l*((long double)col->g) - 0.081l*((long double)col->b) + 128;
     long double ld2 = 0.500l*((long double)col2->r)-0.419l*((long double)col2->g)-0.081l*((long double)col2->b) + 128;
     long double avg = ((ld + ld2)/2);
+    unsigned char retval = (unsigned char) avg;
+    if (avg - retval >= 0.5 && retval != 255) {
+        ++retval;
+    }
+    return retval;
+}
+// for 4 RGB colours:
+static inline unsigned char get_Cr_avg4(const colour *col, const colour *col2, const colour *col3, const colour *col4) {
+    long double ld = 0.500l*((long double)col->r) - 0.419l*((long double)col->g) - 0.081l*((long double)col->b) + 128;
+    long double ld2 = 0.500l*((long double)col2->r)-0.419l*((long double)col2->g)-0.081l*((long double)col2->b) + 128;
+    long double ld3 = 0.500l*((long double)col3->r)-0.419l*((long double)col3->g)-0.081l*((long double)col3->b) + 128;
+    long double ld4 = 0.500l*((long double)col4->r)-0.419l*((long double)col4->g)-0.081l*((long double)col4->b) + 128;
+    long double avg = ((ld + ld2 + ld3 + ld4)/4);
     unsigned char retval = (unsigned char) avg;
     if (avg - retval >= 0.5 && retval != 255) {
         ++retval;
