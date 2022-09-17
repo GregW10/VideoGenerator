@@ -265,13 +265,13 @@ int main(int argc, char **argv) {
     long int start_offset = -((long) (info_header.bmp_width*3 + padding)); // same for all colour sub-sampling cases
     long int repeat_offset;
     colour *colours = malloc(width*height*3); // I have opted for heap alloc. to avoid repeated calls to fread(), the
-    if (colours == NULL) { // tests I have run have shown the comp. time to have been reduced by at least 50%
+    if (colours == NULL) { // tests I have run have shown the comp. time to have been reduced by at least 60%
         fprintf(stderr, "Memory allocation error, likely due to overly large BMP file size.\n");
         return -1;
     }
     colour *clr_ptr;
     if (strcmp_c(clr_space, "C444") == 0) { // uncompressed case - BMP pixel array size = FRAME pixel array size
-        repeat_offset = -((long) (2*info_header.bmp_width*3 + padding));
+        repeat_offset = -((long) (2*width*3 + padding));
         while (*arr) { // lots of repetition below, but better to avoid function calls
             fputs(frame, vid); // each frame starts with "FRAME\n"
             bmp = fopen(*arr++, "rb");
@@ -282,42 +282,35 @@ int main(int argc, char **argv) {
             }
             fseek(bmp, start_offset, SEEK_END); // seek to end row of pixel array in BMP
             clr_ptr = colours;
-            for (size_t i = 0; i < info_header.bmp_height; ++i) { // loop for writing all Y component bytes to video
-                for (size_t j = 0; j < info_header.bmp_width; ++j) {
-                    // fread(&col, sizeof(char), 3, bmp); // get RGB from bitmap and...
-                    // fputc(get_Y(&col), vid); // convert to Y and write to video file
-                    fread(clr_ptr, sizeof(char), 3, bmp);
-                    fputc(get_Y(clr_ptr++), vid);
-                }
+            for (size_t i = 0; i < height; ++i) { // read in image in inverse row order
+                fread(clr_ptr, sizeof(colour), width, bmp);
                 fseek(bmp, repeat_offset, SEEK_CUR); // seek to previous row (y4m videos are inverted compared to BMPs)
-            }
-            clr_ptr = colours;
-            // fseek(bmp, start_offset, SEEK_END); // seek to end row of pixel array again (still missing Cb and Cr planes)
-            for (size_t i = 0; i < info_header.bmp_height; ++i) { // write Cb plane
-                for (size_t j = 0; j < info_header.bmp_width; ++j) {
-                    // fread(&col, sizeof(char), 3, bmp);
-                    // fputc(get_Cb(&col), vid);
-                    fputc(get_Cb(clr_ptr++), vid);
-                }
-                // fseek(bmp, repeat_offset, SEEK_CUR);
-            }
-            clr_ptr = colours;
-            // fseek(bmp, start_offset, SEEK_END); // still missing Cr plane
-            for (size_t i = 0; i < info_header.bmp_height; ++i) { // write Cr plane
-                for (size_t j = 0; j < info_header.bmp_width; ++j) {
-                    // fread(&col, sizeof(char), 3, bmp);
-                    // fputc(get_Cr(&col), vid);
-                    fputc(get_Cr(clr_ptr++), vid);
-                }
-                // fseek(bmp, repeat_offset, SEEK_CUR);
+                clr_ptr += width;
             }
             fclose(bmp);
+            clr_ptr = colours;
+            for (size_t i = 0; i < height; ++i) { // write Y plane
+                for (size_t j = 0; j < width; ++j) {
+                    fputc(get_Y(clr_ptr++), vid);
+                }
+            }
+            clr_ptr = colours;
+            for (size_t i = 0; i < height; ++i) { // write Cb plane
+                for (size_t j = 0; j < width; ++j) {
+                    fputc(get_Cb(clr_ptr++), vid);
+                }
+            }
+            clr_ptr = colours;
+            for (size_t i = 0; i < height; ++i) { // write Cr plane
+                for (size_t j = 0; j < width; ++j) {
+                    fputc(get_Cr(clr_ptr++), vid);
+                }
+            }
         }
         free(colours);
     }
     else if (strcmp_c(clr_space, "C422") == 0) { // video frame size = (2/3) * BMP pixel array size
         repeat_offset = -((long) ((width + info_header.bmp_width)*3 + padding));
-        // colour prev_col;
         unsigned int half_width = width/2; // no 0.5 truncation, width is guaranteed to be even by here
         while (*arr) {
             fputs(frame, vid);
@@ -329,38 +322,30 @@ int main(int argc, char **argv) {
             }
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
-            for (size_t i = 0; i < info_header.bmp_height; ++i) {
-                for (size_t j = 0; j < width; ++j) {
-                    // fread(&col, sizeof(char), 3, bmp);
-                    fread(clr_ptr, sizeof(char), 3, bmp);
-                    // fputc(get_Y(&col), vid);
-                    fputc(get_Y(clr_ptr++), vid);
-                }
+            for (size_t i = 0; i < height; ++i) {
+                fread(clr_ptr, sizeof(colour), width, bmp);
                 fseek(bmp, repeat_offset, SEEK_CUR);
+                clr_ptr += width;
             }
             clr_ptr = colours;
-            // fseek(bmp, start_offset, SEEK_END);
-            for (size_t i = 0; i < info_header.bmp_height; ++i) {
+            for (size_t i = 0; i < height; ++i) { // write full Y plane
+                for (size_t j = 0; j < width; ++j) {
+                    fputc(get_Y(clr_ptr++), vid);
+                }
+            }
+            clr_ptr = colours;
+            for (size_t i = 0; i < height; ++i) { // write 'half' Cb plane, since two pixels share same Cb component
                 for (size_t j = 0; j < half_width; ++j) {
-                    // fread(&prev_col, sizeof(char), 3, bmp);
-                    // fread(&col, sizeof(char), 3, bmp);
-                    // fputc(get_Cb_avg2(&prev_col, &col), vid);
                     fputc(get_Cb_avg2(clr_ptr, clr_ptr + 1), vid); // can't use ++ inside func call here - UB
                     clr_ptr += 2;
                 }
-                // fseek(bmp, repeat_offset, SEEK_CUR);
             }
             clr_ptr = colours;
-            //fseek(bmp, start_offset, SEEK_END);
-            for (size_t i = 0; i < info_header.bmp_height; ++i) {
+            for (size_t i = 0; i < height; ++i) { // same as for Cb plane
                 for (size_t j = 0; j < half_width; ++j) {
-                    // fread(&prev_col, sizeof(char), 3, bmp);
-                    // fread(&col, sizeof(char), 3, bmp);
-                    // fputc(get_Cr_avg2(&prev_col, &col), vid);
                     fputc(get_Cr_avg2(clr_ptr, clr_ptr + 1), vid);
                     clr_ptr += 2;
                 }
-                // fseek(bmp, repeat_offset, SEEK_CUR);
             }
             fclose(bmp);
         }
@@ -368,51 +353,60 @@ int main(int argc, char **argv) {
     }
     else if (strcmp_c(clr_space, "C420") == 0) { // video frame size = (1/2) * BMP pixel array size
         if (height != info_header.bmp_height) {
-            start_offset += (long) (padding + 3*info_header.bmp_width);
+            start_offset -= (long) (padding + 3*info_header.bmp_width);
         }
         repeat_offset = -((long) ((width + info_header.bmp_width)*3 + padding));
-        colour prev_col;
         unsigned int half_width = width/2;
-        unsigned int half_height = height/2; // no .5 truncation, height is guaranteed to be even by here
-        size_t im_size = info_header.bmp_width*info_header.bmp_height*3 + info_header.bmp_height*padding;
-        unsigned char *image = malloc(im_size);
-        if (image == NULL) {
-            free_array(array);
-            fprintf(stderr, "Memory allocation error, likely due to overly large BMP file size.\n");
-            return -1;
-        }
-        unsigned char *im_ptr = image;
+        unsigned int half_height = height/2; // no 0.5 truncation, height is guaranteed to be even by here
+        printf("width: %i\n", width);
+        printf("height: %i\n", height);
+        printf("half_width: %i\n", half_width);
+        printf("half height: %i\n", half_height);
+        colour *next;
+        size_t count = 0;
         while (*arr) {
             fputs(frame, vid);
             bmp = fopen(*arr++, "rb");
-            fseek(bmp, PIX_OFFSET, SEEK_SET);
-            fread(image, sizeof(unsigned char), im_size, bmp);
+            fseek(bmp, start_offset, SEEK_END);
+            clr_ptr = colours;
             for (size_t i = 0; i < height; ++i) {
-                for (size_t j = 0; j < width; ++j) {
-                    fread(&col, sizeof(char), 3, bmp);
-                    fputc(get_Y(&col), vid);
-                }
+                fread(clr_ptr, sizeof(colour), width, bmp);
                 fseek(bmp, repeat_offset, SEEK_CUR);
-            }
-            fseek(bmp, start_offset, SEEK_END);
-            for (size_t i = 0; i < half_height; ++i) {
-                for (size_t j = 0; j < half_width; ++j) {
-                    fread(&prev_col, sizeof(char), 3, bmp);
-                    fread(&col, sizeof(char), 3, bmp);
-                    fputc(get_Cb_avg2(&prev_col, &col), vid);
-                }
-                fseek(bmp, repeat_offset, SEEK_CUR);
-            }
-            fseek(bmp, start_offset, SEEK_END);
-            for (size_t i = 0; i < half_height; ++i) {
-                for (size_t j = 0; j < half_width; ++j) {
-                    fread(&prev_col, sizeof(char), 3, bmp);
-                    fread(&col, sizeof(char), 3, bmp);
-                    fputc(get_Cr_avg2(&prev_col, &col), vid);
-                }
-                fseek(bmp, repeat_offset, SEEK_CUR);
+                clr_ptr += width;
             }
             fclose(bmp);
+            clr_ptr = colours;
+            for (size_t i = 0; i < height; ++i) { // write full Y plane
+                for (size_t j = 0; j < width; ++j) {
+                    fputc(get_Y(clr_ptr++), vid);
+                    ++count;
+                }
+            }
+            printf("Y count: %zu\n", count);
+            count = 0;
+            clr_ptr = colours;
+            next = colours + width; // pointer to the pixel 'below' the pixel pointed to by clr_ptr
+            for (size_t i = 0; i < half_height; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb component
+                for (size_t j = 0; j < half_width; ++j) {
+                    fputc(get_Cb_avg4(clr_ptr, clr_ptr + 1, next, next + 1), vid);
+                    clr_ptr += 2;
+                    next += 2;
+                    ++count;
+                }
+            }
+            printf("Cb count: %zu\n", count);
+            count = 0;
+            clr_ptr = colours;
+            next = colours + width;
+            for (size_t i = 0; i < half_height; ++i) { // same as for Cb plane
+                for (size_t j = 0; j < half_width; ++j) {
+                    fputc(get_Cr_avg4(clr_ptr, clr_ptr + 1, next, next + 1), vid);
+                    clr_ptr += 2;
+                    next += 2;
+                    ++count;
+                }
+            }
+            printf("Cr count: %zu\n", count);
         }
     }
     else { // C411 - video frame size = (1/2) * BMP pixel array size
