@@ -263,156 +263,167 @@ int main(int argc, char **argv) {
     const char *frame = "FRAME\n";
     colour col = {0};
     long int start_offset = -((long) (info_header.bmp_width*3 + padding)); // same for all colour sub-sampling cases
-    long int repeat_offset;
+    long int repeat_offset = -((long) ((width + info_header.bmp_width)*3 + padding));
     colour *colours = malloc(width*height*3); // I have opted for heap alloc. to avoid repeated calls to fread(), the
     if (colours == NULL) { // tests I have run have shown the comp. time to have been reduced by at least 60%
         fprintf(stderr, "Memory allocation error, likely due to overly large BMP file size.\n");
         return -1;
     }
     colour *clr_ptr;
+    unsigned int total_reps = width*height; // guaranteed to never be larger than 4294967295
     if (strcmp_c(clr_space, "C444") == 0) { // uncompressed case - BMP pixel array size = FRAME pixel array size
-        repeat_offset = -((long) (2*width*3 + padding));
         while (*arr) { // lots of repetition below, but better to avoid function calls
             fputs(frame, vid); // each frame starts with "FRAME\n"
             bmp = fopen(*arr++, "rb");
-            if (bmp == NULL) {
+            if (!bmp) {
                 fprintf(stderr, "File \"%s\" could not be opened.\n", *--arr);
                 free_array(array);
                 return -1;
             }
             fseek(bmp, start_offset, SEEK_END); // seek to end row of pixel array in BMP
             clr_ptr = colours;
-            for (size_t i = 0; i < height; ++i) { // read in image in inverse row order
+            for (unsigned int i = 0; i < height; ++i) { // read in image in inverse row order
                 fread(clr_ptr, sizeof(colour), width, bmp);
                 fseek(bmp, repeat_offset, SEEK_CUR); // seek to previous row (y4m videos are inverted compared to BMPs)
                 clr_ptr += width;
             }
             fclose(bmp);
             clr_ptr = colours;
-            for (size_t i = 0; i < height; ++i) { // write Y plane
-                for (size_t j = 0; j < width; ++j) {
-                    fputc(get_Y(clr_ptr++), vid);
-                }
+            for (unsigned int i = 0; i < total_reps; ++i) { // write Y plane
+                fputc(get_Y(clr_ptr++), vid);
             }
             clr_ptr = colours;
-            for (size_t i = 0; i < height; ++i) { // write Cb plane
-                for (size_t j = 0; j < width; ++j) {
-                    fputc(get_Cb(clr_ptr++), vid);
-                }
+            for (unsigned int i = 0; i < total_reps; ++i) { // write Cb plane
+                fputc(get_Cb(clr_ptr++), vid);
             }
             clr_ptr = colours;
-            for (size_t i = 0; i < height; ++i) { // write Cr plane
-                for (size_t j = 0; j < width; ++j) {
-                    fputc(get_Cr(clr_ptr++), vid);
-                }
+            for (unsigned int i = 0; i < total_reps; ++i) { // write Cr plane
+                fputc(get_Cr(clr_ptr++), vid);
             }
         }
-        free(colours);
     }
     else if (strcmp_c(clr_space, "C422") == 0) { // video frame size = (2/3) * BMP pixel array size
-        repeat_offset = -((long) ((width + info_header.bmp_width)*3 + padding));
-        unsigned int half_width = width/2; // no 0.5 truncation, width is guaranteed to be even by here
+        unsigned int half_reps = total_reps/2;
         while (*arr) {
             fputs(frame, vid);
             bmp = fopen(*arr++, "rb");
-            if (bmp == NULL) {
+            if (!bmp) {
                 fprintf(stderr, "File \"%s\" could not be opened.\n", *--arr);
                 free_array(array);
                 return -1;
             }
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
-            for (size_t i = 0; i < height; ++i) {
+            for (unsigned int i = 0; i < height; ++i) {
                 fread(clr_ptr, sizeof(colour), width, bmp);
                 fseek(bmp, repeat_offset, SEEK_CUR);
                 clr_ptr += width;
             }
-            clr_ptr = colours;
-            for (size_t i = 0; i < height; ++i) { // write full Y plane
-                for (size_t j = 0; j < width; ++j) {
-                    fputc(get_Y(clr_ptr++), vid);
-                }
-            }
-            clr_ptr = colours;
-            for (size_t i = 0; i < height; ++i) { // write 'half' Cb plane, since two pixels share same Cb component
-                for (size_t j = 0; j < half_width; ++j) {
-                    fputc(get_Cb_avg2(clr_ptr, clr_ptr + 1), vid); // can't use ++ inside func call here - UB
-                    clr_ptr += 2;
-                }
-            }
-            clr_ptr = colours;
-            for (size_t i = 0; i < height; ++i) { // same as for Cb plane
-                for (size_t j = 0; j < half_width; ++j) {
-                    fputc(get_Cr_avg2(clr_ptr, clr_ptr + 1), vid);
-                    clr_ptr += 2;
-                }
-            }
             fclose(bmp);
+            clr_ptr = colours;
+            for (unsigned int i = 0; i < total_reps; ++i) { // write full Y plane
+                fputc(get_Y(clr_ptr++), vid);
+            }
+            clr_ptr = colours;
+            for (unsigned int i = 0; i < half_reps; ++i) { // write 'half' Cb plane, since 2 pixels share same Cb comp.
+                fputc(get_Cb_avg2(clr_ptr, clr_ptr + 1), vid); // can't use ++ inside func call here - UB
+                clr_ptr += 2;
+            }
+            clr_ptr = colours;
+            for (unsigned int i = 0; i < half_reps; ++i) { // same as for Cb plane
+                fputc(get_Cr_avg2(clr_ptr, clr_ptr + 1), vid);
+                clr_ptr += 2;
+            }
         }
-        free(colours);
-    }
+    } // 4:2:0 sub-sampling is, in my opinion, the best choice, as quality is decent, and file size is cut in half
     else if (strcmp_c(clr_space, "C420") == 0) { // video frame size = (1/2) * BMP pixel array size
         if (height != info_header.bmp_height) {
             start_offset -= (long) (padding + 3*info_header.bmp_width);
         }
-        repeat_offset = -((long) ((width + info_header.bmp_width)*3 + padding));
         unsigned int half_width = width/2;
-        unsigned int half_height = height/2; // no 0.5 truncation, height is guaranteed to be even by here
-        printf("width: %i\n", width);
-        printf("height: %i\n", height);
-        printf("half_width: %i\n", half_width);
-        printf("half height: %i\n", half_height);
+        unsigned int half_height = height/2; // no 0.5 truncation, width and height are guaranteed to be even by here
         colour *next;
-        size_t count = 0;
         while (*arr) {
             fputs(frame, vid);
             bmp = fopen(*arr++, "rb");
+            if (!bmp) {
+                fprintf(stderr, "File \"%s\" could not be opened.\n", *--arr);
+                free_array(array);
+                return -1;
+            }
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
-            for (size_t i = 0; i < height; ++i) {
+            for (unsigned int i = 0; i < height; ++i) {
                 fread(clr_ptr, sizeof(colour), width, bmp);
                 fseek(bmp, repeat_offset, SEEK_CUR);
                 clr_ptr += width;
             }
             fclose(bmp);
             clr_ptr = colours;
-            for (size_t i = 0; i < height; ++i) { // write full Y plane
-                for (size_t j = 0; j < width; ++j) {
-                    fputc(get_Y(clr_ptr++), vid);
-                    ++count;
-                }
+            for (unsigned int i = 0; i < total_reps; ++i) { // write full Y plane
+                fputc(get_Y(clr_ptr++), vid);
             }
-            printf("Y count: %zu\n", count);
-            count = 0;
             clr_ptr = colours;
             next = colours + width; // pointer to the pixel 'below' the pixel pointed to by clr_ptr
-            for (size_t i = 0; i < half_height; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb component
-                for (size_t j = 0; j < half_width; ++j) {
+            for (unsigned int i = 0; i < half_height; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
+                for (unsigned int j = 0; j < half_width; ++j) { // better not to avoid nested loop here
                     fputc(get_Cb_avg4(clr_ptr, clr_ptr + 1, next, next + 1), vid);
                     clr_ptr += 2;
                     next += 2;
-                    ++count;
                 }
+                clr_ptr += width; // 'move' both pointers down by 1 row
+                next += width;
             }
-            printf("Cb count: %zu\n", count);
-            count = 0;
             clr_ptr = colours;
             next = colours + width;
-            for (size_t i = 0; i < half_height; ++i) { // same as for Cb plane
-                for (size_t j = 0; j < half_width; ++j) {
+            for (unsigned int i = 0; i < half_height; ++i) { // same as for Cb plane
+                for (unsigned int j = 0; j < half_width; ++j) {
                     fputc(get_Cr_avg4(clr_ptr, clr_ptr + 1, next, next + 1), vid);
                     clr_ptr += 2;
                     next += 2;
-                    ++count;
                 }
+                clr_ptr += width;
+                next += width;
             }
-            printf("Cr count: %zu\n", count);
         }
     }
     else { // C411 - video frame size = (1/2) * BMP pixel array size
-
+        unsigned int quarter_width = width/4; // no truncation, width is guaranteed to be a multiple of 4 by here
+        unsigned int quarter_reps = total_reps/4; // no truncation, total_reps guaranteed to be multiple of 4 by here
+        while (*arr) {
+            fputs(frame, vid);
+            bmp = fopen(*arr++, "rb");
+            if (!bmp) {
+                fprintf(stderr, "File \"%s\" could not be opened.\n", *--arr);
+                free_array(array);
+                return -1;
+            }
+            fseek(bmp, start_offset, SEEK_END);
+            clr_ptr = colours;
+            for (unsigned int i = 0; i < height; ++i) {
+                fread(clr_ptr, sizeof(colour), width, bmp);
+                fseek(bmp, repeat_offset, SEEK_CUR);
+                clr_ptr += width;
+            }
+            fclose(bmp);
+            clr_ptr = colours;
+            for (unsigned int i = 0; i < total_reps; ++i) { // write full Y plane
+                fputc(get_Y(clr_ptr++), vid);
+            }
+            clr_ptr = colours;
+            for (unsigned int i = 0; i < quarter_reps; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
+                fputc(get_Cb_avg4(clr_ptr, clr_ptr + 1, clr_ptr + 2, clr_ptr + 3), vid);
+                clr_ptr += 4;
+            }
+            clr_ptr = colours;
+            for (unsigned int i = 0; i < quarter_reps; ++i) { // same as for Cb plane
+                fputc(get_Cr_avg4(clr_ptr, clr_ptr + 1, clr_ptr + 2, clr_ptr + 3), vid);
+                clr_ptr += 4;
+            }
+        }
     }
-    size_t y4m_file_size = ftell(vid);
+    free(colours);
+    size_t y4m_file_size = ftell(vid); // will be very big!!!
     fclose(vid);
     arr = array;
     if (delete) { // more efficient to create separate loop, rather than re-evaluating condition within above loop
