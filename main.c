@@ -29,8 +29,8 @@ int main(int argc, char **argv) {
     bool delete = false;
     bool timed = false;
     bool give_size = false;
-    long long rate = 30;
-    const char *cmpr = "4:4:4";
+    long long rate = 30; // default frame rate
+    const char *cmpr = "4:2:0"; // default colour sub-sampling
     bool cmpr_set = false;
     if (argc >= 3) {
         const char *fr = *(argv + 2);
@@ -177,7 +177,7 @@ int main(int argc, char **argv) {
     clr_space[0] = 'C';
     clr_space[1] = *cmpr++;
     clr_space[2] = *++cmpr;
-    clr_space[3] = *(cmpr += 2);
+    clr_space[3] = *(cmpr + 2);
     clr_space[4] = 0;
     FILE *bmp = fopen(*array, "rb");
     if (bmp == NULL) {
@@ -207,19 +207,15 @@ int main(int argc, char **argv) {
     unsigned long width = info_header.bmp_width;
     unsigned long height = info_header.bmp_height;
     unsigned char padding = PAD_24BPP(info_header.bmp_width);
-    unsigned char lopped_off_w = 0; // cutting edge off images is required for clr sub-sampling other than C444 if the
-    unsigned char lopped_off_h = 0; // width and height of the images are not a multiple of 4
     if (strcmp_c(clr_space, "C422") == 0 || strcmp_c(clr_space, "C420") == 0) {
         if (info_header.bmp_width % 2 != 0) {
             --width;
-            lopped_off_w = 1;
         }
         term_if_zero(width);
     }
     if (strcmp_c(clr_space, "C420") == 0) {
         if (info_header.bmp_height % 2 != 0) {
             --height;
-            lopped_off_h = 1;
         }
         term_if_zero(height);
     }
@@ -229,7 +225,7 @@ int main(int argc, char **argv) {
             if (info_header.bmp_width <= rem) {
                 term_if_zero(0);
             }
-            width -= (lopped_off_w = rem);
+            width -= rem;
         }
     }
     const char *curr_time = get_und_time();
@@ -261,7 +257,6 @@ int main(int argc, char **argv) {
     fwrite(yuv_h, sizeof(char), strlen_c(yuv_h), vid);
     free((char *) yuv_h);
     const char *frame = "FRAME\n";
-    colour col = {0};
     long int start_offset = -((long) (info_header.bmp_width*3 + padding)); // same for all colour sub-sampling cases
     long int repeat_offset = -((long) ((width + info_header.bmp_width)*3 + padding));
     colour *colours = malloc(width*height*3); // I have opted for heap alloc. to avoid repeated calls to fread(), the
@@ -388,7 +383,6 @@ int main(int argc, char **argv) {
         }
     }
     else { // C411 - video frame size = (1/2) * BMP pixel array size
-        unsigned int quarter_width = width/4; // no truncation, width is guaranteed to be a multiple of 4 by here
         unsigned int quarter_reps = total_reps/4; // no truncation, total_reps guaranteed to be multiple of 4 by here
         while (*arr) {
             fputs(frame, vid);
