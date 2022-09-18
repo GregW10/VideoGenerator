@@ -5,8 +5,13 @@
 #include "overhead.h"
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "3 command-line arguments expected (including executable name).\n");
+    if (argc < 3 || argc > 5) {
+        fprintf(stderr, "Between 3-5 command-line arguments expected:\n"
+                        "1: Executable name\n"
+                        "2: BMP input file (mandatory)\n"
+                        "3: Grayscale colour cutoff point (0-255) (mandatory)\n"
+                        "4: Darker colour in RGB format (unsigned integer, 0 - 16777255) (optional).\n"
+                        "5: Brighter colour in RGB format (unsigned integer, 0 - 16777255) (optional).\n");
         return -1;
     }
     const char *cutoff_str = *(argv + 2);
@@ -19,6 +24,30 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error: file provided is not a .bmp file.\n");
         return -1;
     }
+    unsigned int dark_clr = 0; // black
+    unsigned int bright_clr = (255 << 24) + (255 << 16) + (255 << 8); // white but including the 'reserved' zero field
+    if (argc >= 4) {
+        const char *dark_str = *(argv + 3);
+        while (*dark_str) {
+            dark_clr *= 10;
+            dark_clr += *dark_str++ - 48;
+        }
+        dark_clr &= 0x00ffffff; // these two lines are for converting the RGB value into a BGR0 value
+        dark_clr = ((dark_clr & 0x000000ff) << 24) + ((dark_clr & 0x0000ff00) << 16) + ((dark_clr & 0x00ff0000) << 8);
+        if (argc == 5) {
+            const char *bright_str = *(argv + 4);
+            bright_clr = 0;
+            while (*bright_str) {
+                bright_clr *= 10;
+                bright_clr += *bright_str++ - 48;
+            }
+            printf("Bright colour: %u\n", bright_clr);
+            bright_clr &= 0x00ffffff;
+            bright_clr = ((bright_clr & 0x000000ff) << 24) + ((bright_clr & 0x0000ff00) << 16) + ((bright_clr & 0x00ff0000) << 8);
+        }
+    }
+    printf("DarK: %u, bright: %u\n", dark_clr, bright_clr);
+    printf("max RGB: %u\n", 0x00ffffff);
     FILE *fp = fopen(path, "rb");
     if (!fp) {
         fprintf(stderr, "Error opening BMP file.\n");
@@ -67,6 +96,17 @@ int main(int argc, char **argv) {
     strcat_c(out_str, get_und_time());
     strcat_c(out_str, ".bmp");
     fp = fopen(out_str, "wb");
+    if (!fp) {
+        fprintf(stderr, "Error opening output BMP file \"%s\".\n", out_str);
+        free_ptrs(2, out_str, colours);
+        return -1;
+    }
+    unsigned int bytes_w = info_hdr.bmp_width % 8 == 0 ? info_hdr.bmp_width/8 : info_hdr.bmp_width/8 + 1;
+    info_hdr.pixel_depth = 1; // 1 bpp
+    info_hdr.image_size = (bytes_w + (bytes_w % 4 == 0 ? 0 : 4 - (bytes_w % 4)))*info_hdr.bmp_height;
+    hdr.fileSize = PIX_OFFSET + info_hdr.image_size;
+    fwrite(&hdr, sizeof(bmp_header), 1, fp);
+    fwrite(&info_hdr, sizeof(bmp_info_header), 1, fp);
     fclose(fp);
     free(out_str);
     free(colours);
