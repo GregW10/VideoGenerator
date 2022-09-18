@@ -12,6 +12,11 @@
 extern int errno;
 #endif
 
+#define PAD_24BPP(w) ((w)*3 % 4 == 0 ? 0 : 4 - ((3*(w)) % 4))
+
+#define UND_TIME_MAX_LEN 25 // exact length of str. returned by get_und_time() func. (not including '\0')
+#define PIX_OFFSET 54 // required starting address of the pixel offset in the BMP images
+
 #pragma pack(push, 1)
 
 typedef enum {

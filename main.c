@@ -11,11 +11,7 @@
 #include <unistd.h>
 #endif
 
-#define PAD_24BPP(w) ((w)*3 % 4 == 0 ? 0 : 4 - ((3*(w)) % 4))
-
 #define MIN_ARR_SIZE 128 // starting size of array to store bmp paths
-#define UND_TIME_MAX_LEN 25 // exact length of str. returned by get_und_time() func. (not including '\0')
-#define PIX_OFFSET 54 // required starting address of the pixel offset in the BMP images
 
 static inline void delegate_flags(const char *arg, bool *del, bool *tim, bool *sz);
 static inline void term_if_zero(size_t val);
@@ -266,6 +262,7 @@ int main(int argc, char **argv) {
     }
     colour *clr_ptr;
     unsigned int total_reps = width*height; // guaranteed to never be larger than 4294967295
+    unsigned int i; // loop counter
     if (strcmp_c(clr_space, "C444") == 0) { // uncompressed case - BMP pixel array size = FRAME pixel array size
         while (*arr) { // lots of repetition below, but better to avoid function calls
             fputs(frame, vid); // each frame starts with "FRAME\n"
@@ -277,22 +274,22 @@ int main(int argc, char **argv) {
             }
             fseek(bmp, start_offset, SEEK_END); // seek to end row of pixel array in BMP
             clr_ptr = colours;
-            for (unsigned int i = 0; i < height; ++i) { // read in image in inverse row order
+            for (i = 0; i < height; ++i) { // read in image in inverse row order
                 fread(clr_ptr, sizeof(colour), width, bmp);
                 fseek(bmp, repeat_offset, SEEK_CUR); // seek to previous row (y4m videos are inverted compared to BMPs)
                 clr_ptr += width;
             }
             fclose(bmp);
             clr_ptr = colours;
-            for (unsigned int i = 0; i < total_reps; ++i) { // write Y plane
+            for (i = 0; i < total_reps; ++i) { // write Y plane
                 fputc(get_Y(clr_ptr++), vid);
             }
             clr_ptr = colours;
-            for (unsigned int i = 0; i < total_reps; ++i) { // write Cb plane
+            for (i = 0; i < total_reps; ++i) { // write Cb plane
                 fputc(get_Cb(clr_ptr++), vid);
             }
             clr_ptr = colours;
-            for (unsigned int i = 0; i < total_reps; ++i) { // write Cr plane
+            for (i = 0; i < total_reps; ++i) { // write Cr plane
                 fputc(get_Cr(clr_ptr++), vid);
             }
         }
@@ -309,23 +306,23 @@ int main(int argc, char **argv) {
             }
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
-            for (unsigned int i = 0; i < height; ++i) {
+            for (i = 0; i < height; ++i) {
                 fread(clr_ptr, sizeof(colour), width, bmp);
                 fseek(bmp, repeat_offset, SEEK_CUR);
                 clr_ptr += width;
             }
             fclose(bmp);
             clr_ptr = colours;
-            for (unsigned int i = 0; i < total_reps; ++i) { // write full Y plane
+            for (i = 0; i < total_reps; ++i) { // write full Y plane
                 fputc(get_Y(clr_ptr++), vid);
             }
             clr_ptr = colours;
-            for (unsigned int i = 0; i < half_reps; ++i) { // write 'half' Cb plane, since 2 pixels share same Cb comp.
+            for (i = 0; i < half_reps; ++i) { // write 'half' Cb plane, since 2 pixels share same Cb comp.
                 fputc(get_Cb_avg2(clr_ptr, clr_ptr + 1), vid); // can't use ++ inside func call here - UB
                 clr_ptr += 2;
             }
             clr_ptr = colours;
-            for (unsigned int i = 0; i < half_reps; ++i) { // same as for Cb plane
+            for (i = 0; i < half_reps; ++i) { // same as for Cb plane
                 fputc(get_Cr_avg2(clr_ptr, clr_ptr + 1), vid);
                 clr_ptr += 2;
             }
@@ -338,6 +335,7 @@ int main(int argc, char **argv) {
         unsigned int half_width = width/2;
         unsigned int half_height = height/2; // no 0.5 truncation, width and height are guaranteed to be even by here
         colour *next;
+        unsigned int j; // nested loop counter
         while (*arr) {
             fputs(frame, vid);
             bmp = fopen(*arr++, "rb");
@@ -348,20 +346,20 @@ int main(int argc, char **argv) {
             }
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
-            for (unsigned int i = 0; i < height; ++i) {
+            for (i = 0; i < height; ++i) {
                 fread(clr_ptr, sizeof(colour), width, bmp);
                 fseek(bmp, repeat_offset, SEEK_CUR);
                 clr_ptr += width;
             }
             fclose(bmp);
             clr_ptr = colours;
-            for (unsigned int i = 0; i < total_reps; ++i) { // write full Y plane
+            for (i = 0; i < total_reps; ++i) { // write full Y plane
                 fputc(get_Y(clr_ptr++), vid);
             }
             clr_ptr = colours;
             next = colours + width; // pointer to the pixel 'below' the pixel pointed to by clr_ptr
-            for (unsigned int i = 0; i < half_height; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
-                for (unsigned int j = 0; j < half_width; ++j) { // better not to avoid nested loop here
+            for (i = 0; i < half_height; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
+                for (j = 0; j < half_width; ++j) { // better not to avoid nested loop here
                     fputc(get_Cb_avg4(clr_ptr, clr_ptr + 1, next, next + 1), vid);
                     clr_ptr += 2;
                     next += 2;
@@ -371,8 +369,8 @@ int main(int argc, char **argv) {
             }
             clr_ptr = colours;
             next = colours + width;
-            for (unsigned int i = 0; i < half_height; ++i) { // same as for Cb plane
-                for (unsigned int j = 0; j < half_width; ++j) {
+            for (i = 0; i < half_height; ++i) { // same as for Cb plane
+                for (j = 0; j < half_width; ++j) {
                     fputc(get_Cr_avg4(clr_ptr, clr_ptr + 1, next, next + 1), vid);
                     clr_ptr += 2;
                     next += 2;
@@ -394,23 +392,23 @@ int main(int argc, char **argv) {
             }
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
-            for (unsigned int i = 0; i < height; ++i) {
+            for (i = 0; i < height; ++i) {
                 fread(clr_ptr, sizeof(colour), width, bmp);
                 fseek(bmp, repeat_offset, SEEK_CUR);
                 clr_ptr += width;
             }
             fclose(bmp);
             clr_ptr = colours;
-            for (unsigned int i = 0; i < total_reps; ++i) { // write full Y plane
+            for (i = 0; i < total_reps; ++i) { // write full Y plane
                 fputc(get_Y(clr_ptr++), vid);
             }
             clr_ptr = colours;
-            for (unsigned int i = 0; i < quarter_reps; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
+            for (i = 0; i < quarter_reps; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
                 fputc(get_Cb_avg4(clr_ptr, clr_ptr + 1, clr_ptr + 2, clr_ptr + 3), vid);
                 clr_ptr += 4;
             }
             clr_ptr = colours;
-            for (unsigned int i = 0; i < quarter_reps; ++i) { // same as for Cb plane
+            for (i = 0; i < quarter_reps; ++i) { // same as for Cb plane
                 fputc(get_Cr_avg4(clr_ptr, clr_ptr + 1, clr_ptr + 2, clr_ptr + 3), vid);
                 clr_ptr += 4;
             }
