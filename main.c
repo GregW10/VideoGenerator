@@ -117,8 +117,12 @@ int main(int argc, char **argv) {
     char *path;
     char *bmp_path = malloc(sizeof(char)*(strlen_c(*(argv + 1)) + 2));
     strcpy_c(bmp_path, *(argv + 1));
+#ifdef _WIN32
     strcat_c(bmp_path, "\\");
     size_t len = strlen_c(bmp_path);
+#else
+    size_t len = strlen_c(bmp_path) + 1; // for appending the '/' later
+#endif
     size_t size = 0; // have to leave space for NULL at the end of the array
 #ifdef _WIN32
     path = malloc(sizeof(char)*(strlen_c(bmp_path) + 6));
@@ -135,6 +139,11 @@ int main(int argc, char **argv) {
 #else
     struct dirent *entry;
     DIR *dir = opendir(bmp_path);
+    if (dir == NULL) {
+        fprintf(stderr, "Could not open directory.\n");
+        perror("Error");
+        return -1;
+    }
 #endif
     const char **array = malloc(sizeof(char*)*MIN_ARR_SIZE);
     const char **ptr = array;
@@ -156,18 +165,20 @@ int main(int argc, char **argv) {
         if (endswith(entry->d_name, ".bmp")) {
             str = malloc(sizeof(char)*(len + 256));
             strcpy_c(str, bmp_path);
+            strcat_c(str, "/");
             strcat_c(str, entry->d_name);
             *ptr++ = str;
             ++size;
             if (size >= MIN_ARR_SIZE && (size & (size - 1)) == 0) {
                 array = realloc(array, size*2*sizeof(char*));
+                ptr = array + size;
             }
         }
     }
 #endif
     *ptr = NULL;
     array = realloc(array, (size + 1)*(sizeof(char*)));
-    alphabetical_sort(array); // in case paths found are not in alph. order, this sorts them
+    alphabetical_sort(array); // in case paths found are not in alphabetical order, this sorts them
     const char **arr = array;
     char clr_space[5];
     clr_space[0] = 'C';
