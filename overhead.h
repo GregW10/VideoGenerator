@@ -32,9 +32,9 @@ typedef struct {
 typedef struct {
     unsigned char bm[2]; // should always be chars 'B' and 'M'
     unsigned int fileSize;
-    unsigned short reserved1;
-    unsigned short reserved2;
-    unsigned int px_arr_offset; // offset of where the pixel array starts
+    unsigned short reserved1; // 0
+    unsigned short reserved2; // 0
+    unsigned int px_arr_offset; // offset of where the pixel array starts (54)
 } bmp_header;
 
 typedef struct {
@@ -50,6 +50,7 @@ typedef struct {
     unsigned int clr_palette; // can be zero
     unsigned int important_clrs; // can be zero
 } bmp_info_header;
+#pragma pack(pop)
 // no NULL checks in the bottom functions to reduce comp. time (UB if NULL passed)
 static inline unsigned char get_Y(const colour *col) { // get Luma (luminance) component from RGB values
     long double ld = 0.299l*((long double) col->r) + 0.587l*((long double) col->g) + 0.114l*((long double) col->b);
@@ -93,6 +94,24 @@ static inline unsigned char get_Cb_avg4(const colour *col, const colour *col2, c
     }
     return retval;
 }
+// average Cb value for 8 RGB colours: (again, no varargs to increase efficiency)
+static inline unsigned char get_Cb_avg8(const colour *col, const colour *col2, const colour *col3, const colour *col4,
+                                        const colour *col5, const colour *col6, const colour *col7, const colour *col8){
+    long double ld = -0.169l*((long double)col->r) - 0.331l*((long double)col->g) + 0.500l*((long double)col->b) + 128;
+    long double ld2 = -0.169l*((long double)col2->r)-0.331l*((long double)col2->g)+0.500l*((long double)col2->b) + 128;
+    long double ld3 = -0.169l*((long double)col3->r)-0.331l*((long double)col3->g)+0.500l*((long double)col3->b) + 128;
+    long double ld4 = -0.169l*((long double)col4->r)-0.331l*((long double)col4->g)+0.500l*((long double)col4->b) + 128;
+    long double ld5 = -0.169l*((long double)col5->r)-0.331l*((long double)col5->g)+0.500l*((long double)col5->b) + 128;
+    long double ld6 = -0.169l*((long double)col6->r)-0.331l*((long double)col6->g)+0.500l*((long double)col6->b) + 128;
+    long double ld7 = -0.169l*((long double)col7->r)-0.331l*((long double)col7->g)+0.500l*((long double)col7->b) + 128;
+    long double ld8 = -0.169l*((long double)col8->r)-0.331l*((long double)col8->g)+0.500l*((long double)col8->b) + 128;
+    long double avg = ((ld + ld2 + ld3 + ld4 + ld5 + ld6 + ld7 + ld8)/4);
+    unsigned char retval = (unsigned char) avg;
+    if (avg - retval >= 0.5 && retval != 255) {
+        ++retval;
+    }
+    return retval;
+}
 
 static inline unsigned char get_Cr(const colour *col) { // get Cr (red chrominance) component from RGB values
     long double ld = 0.500l*((long double) col->r) - 0.419l*((long double) col->g) - 0.081l*((long double)col->b) + 128;
@@ -126,16 +145,34 @@ static inline unsigned char get_Cr_avg4(const colour *col, const colour *col2, c
     }
     return retval;
 }
+// for 8 RGB colours
+static inline unsigned char get_Cr_avg8(const colour *col, const colour *col2, const colour *col3, const colour *col4,
+                                        const colour *col5, const colour *col6, const colour *col7, const colour *col8){
+    long double ld = 0.500l*((long double)col->r) - 0.419l*((long double)col->g) - 0.081l*((long double)col->b) + 128;
+    long double ld2 = 0.500l*((long double)col2->r)-0.419l*((long double)col2->g)-0.081l*((long double)col2->b) + 128;
+    long double ld3 = 0.500l*((long double)col3->r)-0.419l*((long double)col3->g)-0.081l*((long double)col3->b) + 128;
+    long double ld4 = 0.500l*((long double)col4->r)-0.419l*((long double)col4->g)-0.081l*((long double)col4->b) + 128;
+    long double ld5 = 0.500l*((long double)col5->r)-0.419l*((long double)col5->g)-0.081l*((long double)col5->b) + 128;
+    long double ld6 = 0.500l*((long double)col6->r)-0.419l*((long double)col6->g)-0.081l*((long double)col6->b) + 128;
+    long double ld7 = 0.500l*((long double)col7->r)-0.419l*((long double)col7->g)-0.081l*((long double)col7->b) + 128;
+    long double ld8 = 0.500l*((long double)col8->r)-0.419l*((long double)col8->g)-0.081l*((long double)col8->b) + 128;
+    long double avg = ((ld + ld2 + ld3 + ld4 + ld5 + ld6 + ld7 + ld8)/4);
+    unsigned char retval = (unsigned char) avg;
+    if (avg - retval >= 0.5 && retval != 255) {
+        ++retval;
+    }
+    return retval;
+}
 
 static inline void print_colour(const colour *col) {
-    if (col == NULL) {
+    if (!col) {
         return;
     }
     printf("R: %i, G: %i, B: %i\n", col->r, col->g, col->b);
 }
 
 void zero(void *str, size_t n) {
-    if (str == NULL)
+    if (!str)
         return;
     char *ptr = str;
     while (n --> 0) {
@@ -143,8 +180,24 @@ void zero(void *str, size_t n) {
     }
 }
 
+static inline bool is_digit_c(char c) {
+    return c >= 48 && c <= 57;
+}
+
+bool is_numeric(const char *str) {
+    if (!str || !*str) {
+        return false;
+    }
+    while (*str) {
+        if (!is_digit_c(*str++)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 size_t strlen_c(const char *str) {
-    if (str == NULL || *str == 0)
+    if (!str || !*str)
         return 0;
     size_t count = 0;
     while (*str++) ++count;
@@ -152,7 +205,7 @@ size_t strlen_c(const char *str) {
 }
 
 int strcmp_c(const char *restrict str1, const char *str2) {
-    if (str1 == NULL || str2 == NULL) {
+    if (!str1 || !str2) {
         return -128;
     }
     while (*str1 && *str2) {
@@ -166,7 +219,7 @@ int strcmp_c(const char *restrict str1, const char *str2) {
 }
 
 int alfcmp_c(const char *restrict str1, const char *str2) { // treats upper and lower-case letters equally
-    if (str1 == NULL || str2 == NULL) {
+    if (!str1 || !str2) {
         return -128;
     }
     while (*str1 && *str2) {
@@ -197,7 +250,7 @@ int alfcmp_c(const char *restrict str1, const char *str2) { // treats upper and 
 }
 
 char *strcpy_c(char *restrict dst, const char *src) {
-    if (dst == NULL || src == NULL || *src == 0) {
+    if (!dst || !src || !*src) {
         return dst;
     }
     char *org = dst;
@@ -206,11 +259,11 @@ char *strcpy_c(char *restrict dst, const char *src) {
 }
 
 char *strcat_c(char *restrict dst, const char *src) {
-    if (dst == NULL || src == NULL || *src == 0) {
+    if (!dst || !src || !*src) {
         return dst;
     }
     char *org = dst;
-    if (*dst == 0)
+    if (!*dst)
         goto start;
     while (*++dst);
     start:
@@ -219,7 +272,7 @@ char *strcat_c(char *restrict dst, const char *src) {
 }
 
 char *chrcat_c(char *restrict dst, char ch) {
-    if (dst == NULL || ch == 0) {
+    if (!dst || !ch) {
         return dst;
     }
     if (*dst == 0) {
@@ -234,7 +287,7 @@ char *chrcat_c(char *restrict dst, char ch) {
 }
 
 bool endswith(const char *str, const char *suffix) {
-    if (str == NULL || suffix == NULL) {
+    if (!str || !suffix) {
         return false;
     }
     if ((*str == 0 && *suffix == 0) || *suffix == 0) {
@@ -260,7 +313,7 @@ bool endswith(const char *str, const char *suffix) {
 }
 
 void alphabetical_sort(const char **array) { // sorts an array of strings alphabetically - must end in NULL
-    if (array == NULL || *array == NULL || *(array + 1) == NULL)
+    if (!array || !*array || !*(array + 1))
         return;
     const char *temp;
     bool sorted = false;
@@ -286,7 +339,7 @@ void alphabetical_sort(const char **array) { // sorts an array of strings alphab
 }
 
 void print_array(const char *const *array) { // must end in NULL
-    if (array == NULL || *array == NULL || **array == 0) {
+    if (!array || !*array || !**array) {
         return;
     }
     while (*array) {
@@ -295,7 +348,7 @@ void print_array(const char *const *array) { // must end in NULL
 }
 
 void free_array(const char **array) {
-    if (array == NULL) {
+    if (!array) {
         return;
     }
     const char **ptr = array;
@@ -307,21 +360,26 @@ void free_array(const char **array) {
 }
 
 void free_ptrs(size_t num, ...) {
-    if (num == 0) {
+    if (!num) {
         return;
     }
     va_list ptr;
     va_start(ptr, num);
+    const char *p;
     for (size_t i = 0; i < num; ++i) {
-        free((char *) (va_arg(ptr, const char *)));
+        p = va_arg(ptr, const char *);
+        if (p)
+            free((char *) p);
     }
     va_end(ptr);
 }
 
-const char *get_und_time() {
+const char *get_und_time(void) {
     time_t t = time(NULL);
     char *ptr = ctime(&t);
     const char *org = ptr;
+    if (!is_digit_c(*(ptr + 8))) // case for first 9 days of the month
+        *(ptr + 8) = 48;
     *(ptr + 13) = 'h'; // replace first colon
     *(ptr + 16) = 'm'; // replace second colon
     *(ptr + 19) = 's'; // replace last underscore
@@ -340,10 +398,10 @@ const char *get_und_time() {
 }
 
 char *append_integer(char *str, long long num) {
-    if (str == NULL) {
+    if (!str) {
         return str;
     }
-    if (num == 0) {
+    if (!num) {
         strcat_c(str, "0");
         return str;
     }
@@ -373,7 +431,7 @@ char *append_integer(char *str, long long num) {
 }
 
 bool is_normal_ascii(const char *str) { // checks for 'normal' ASCII characters
-    if (str == NULL || *str == 0) {
+    if (!str || !*str) {
         return false;
     }
     while (*str) {
@@ -384,31 +442,15 @@ bool is_normal_ascii(const char *str) { // checks for 'normal' ASCII characters
     return true;
 }
 
-static inline bool is_num(char c) {
-    return c >= 48 && c <= 57;
-}
-
-bool is_numeric(const char *str) {
-    if (str == NULL || *str == 0) {
-        return false;
-    }
-    while (*str) {
-        if (!is_num(*str++)) {
-            return false;
-        }
-    }
-    return true;
-}
-
 const char *yuv_header(unsigned short width, unsigned short height, long long fr_num,
                        long long fr_denom, char interlacing, long long pix_asp_ratio_num,
                        long long pix_asp_ratio_denom, const char *clr_space, const char *x_param) {
-    if (width == 0 || height == 0 || fr_num <= 0 || fr_denom <= 0 || (interlacing != 'p' && interlacing != 't' &&
-    interlacing != 'b' && interlacing != 'm') || pix_asp_ratio_num <= 0 || pix_asp_ratio_denom <= 0 || clr_space == NULL
-    || *clr_space == 0 || (strcmp_c(clr_space, "C420mpeg2") != 0 && strcmp_c(clr_space, "C444alpha") != 0 &&
+    if (!width || !height || fr_num <= 0 || fr_denom <= 0 || (interlacing != 'p' && interlacing != 't' &&
+    interlacing != 'b' && interlacing != 'm') || pix_asp_ratio_num <= 0 || pix_asp_ratio_denom <= 0 || !clr_space
+    || !*clr_space || (strcmp_c(clr_space, "C420mpeg2") != 0 && strcmp_c(clr_space, "C444alpha") != 0 &&
     strcmp_c(clr_space, "C420jpeg") != 0 && strcmp_c(clr_space, "C420paldv") != 0 && strcmp_c(clr_space, "C411") != 0
     && strcmp_c(clr_space, "C420") != 0 && strcmp_c(clr_space, "C422") != 0 && strcmp_c(clr_space, "C444")
-    && strcmp_c(clr_space, "Cmono") != 0)) {
+    && strcmp_c(clr_space, "Cmono") != 0 && strcmp_c(clr_space, "C410") != 0)) {
         errno = EINVAL;
         return NULL;
     }
@@ -443,4 +485,23 @@ const char *yuv_header(unsigned short width, unsigned short height, long long fr
     chrcat_c(str, '\n'); // is necessary
     return str;
 }
-#pragma pack(pop)
+
+static inline void check_dim(FILE *fp, const char *str) {
+    static unsigned int expected_width = 0;
+    static unsigned int expected_height;
+    static unsigned int width;
+    static unsigned int height;
+    if (expected_width == 0) {
+        fseek(fp, 18, SEEK_SET);
+        fread(&expected_width, sizeof(unsigned int), 1, fp);
+        fread(&expected_height, sizeof(unsigned int), 1, fp);
+        return;
+    }
+    fseek(fp, 18, SEEK_SET);
+    fread(&width, sizeof(unsigned int), 1, fp);
+    fread(&height, sizeof(unsigned int), 1, fp);
+    if (width != expected_width || height != expected_height) {
+        fprintf(stderr, "The dimensions of BMP image \"%s\" do not match that of first BMP.\n", str);
+        abort();
+    }
+}

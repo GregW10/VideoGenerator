@@ -11,12 +11,34 @@
 #include <unistd.h>
 #endif
 
+#include <signal.h>
+
 #define MIN_ARR_SIZE 128 // starting size of array to store bmp paths
+
+char *bmp_path = NULL; // global pointers, so they can be easily freed with a func. passed to atexit()
+char *path = NULL;
+const char **array = NULL;
+char *vid_path;
+const char *yuv_h = NULL;
+colour *colours = NULL;
+
+void clean(void) {
+    if (array)
+        free_array(array);
+    free_ptrs(5, bmp_path, path, vid_path, yuv_h, colours);
+}
+
+_Noreturn void handler(int signal) {
+    clean();
+    exit(1);
+}
 
 static inline void delegate_flags(const char *arg, bool *del, bool *tim, bool *sz);
 static inline void term_if_zero(size_t val);
 
 int main(int argc, char **argv) {
+    atexit(clean); // register clean func. with atexit() - ensures pointers are freed in case of premature termination
+    signal(SIGABRT, handler);
     time_t beg_time = time(NULL);
     if (argc > 7 || argc < 2) {
         fprintf(stderr, "Invalid number of command-line arguments provided.\n");
@@ -32,25 +54,25 @@ int main(int argc, char **argv) {
         const char *fr = *(argv + 2);
         if (!is_numeric(fr)) {
             if (strcmp_c(fr, "4:4:4") != 0 && strcmp_c(fr, "4:2:2") != 0 && strcmp_c(fr, "4:2:0") != 0 &&
-                strcmp_c(fr, "4:1:1") != 0) {
+                strcmp_c(fr, "4:1:1") != 0 && strcmp_c(fr, "4:1:0") != 0) {
                 if (strcmp_c(fr, "-delete") != 0 && strcmp_c(fr, "-time") != 0 && strcmp_c(fr, "-size") != 0) {
-                    fprintf(stderr, "Third argument is not numeric:\n%s\n", *(argv + 2));
+                    fprintf(stderr, "Third argument is not numeric:\n%s\n", fr);
                     while (*fr) {
-                        if (!is_num(*fr++)) {
+                        if (!is_digit_c(*fr++)) {
                             fprintf(stderr, "%c", '^');
                             continue;
                         }
                         fprintf(stderr, "~");
                     }
                     fprintf(stderr, "\n... (for frame rate), nor is a valid colour space or flag.");
-                    return -1;
+                    return 1;
                 }
                 else {
-                    delegate_flags(*(argv + 2), &delete, &timed, &give_size);
+                    delegate_flags(fr, &delete, &timed, &give_size);
                 }
             }
             else {
-                cmpr = *(argv + 2);
+                cmpr = fr;
                 cmpr_set = true;
             }
         }
@@ -63,25 +85,27 @@ int main(int argc, char **argv) {
         }
     }
     if (argc >= 4) {
+        const char *third = *(argv + 3);
         if (!cmpr_set) {
-            if (strcmp_c(*(argv + 3), "4:4:4") != 0 && strcmp_c(*(argv + 3), "4:2:2") != 0 &&
-                strcmp_c(*(argv + 3), "4:2:0") != 0 && strcmp_c(*(argv + 3), "4:1:1") != 0) {
-                if (strcmp_c(*(argv + 3), "-delete") != 0 && strcmp_c(*(argv + 3), "-time") != 0 &&
-                    strcmp_c(*(argv + 3), "-size") != 0) {
-                    fprintf(stderr, "Invalid 4th argument: invalid YUV colour space (only 4:4:4, 4:2:2, 4:2:0 and 4:1:1"
-                                    " are possible) and invalid flag.\n");
-                    return -1;
+            if (strcmp_c(third, "4:4:4") != 0 && strcmp_c(third, "4:2:2") != 0 &&
+                strcmp_c(third, "4:2:0") != 0 && strcmp_c(third, "4:1:1") != 0 &&
+                strcmp_c(third, "4:1:0") != 0) {
+                if (strcmp_c(third, "-delete") != 0 && strcmp_c(third, "-time") != 0 &&
+                    strcmp_c(third, "-size") != 0) {
+                    fprintf(stderr, "Invalid 4th argument: invalid YUV colour space (only 4:4:4, 4:2:2, 4:2:0, 4:1:1 "
+                                    "and 4:1:0 are possible) and invalid flag.\n");
+                    return 1;
                 }
                 else {
-                    delegate_flags(*(argv + 3), &delete, &timed, &give_size);
+                    delegate_flags(third, &delete, &timed, &give_size);
                 }
             }
             else {
-                cmpr = *(argv + 3);
+                cmpr = third;
             }
         }
         else {
-            delegate_flags(*(argv + 3), &delete, &timed, &give_size);
+            delegate_flags(third, &delete, &timed, &give_size);
         }
     }
     if (argc >= 5) { // repeated flags are simply ignored (no harm done!)
@@ -97,25 +121,24 @@ int main(int argc, char **argv) {
     DWORD fileAttr = GetFileAttributesA(*(argv + 1));
     if (fileAttr == INVALID_FILE_ATTRIBUTES) {
         fprintf(stderr, "Invalid directory provided.\n");
-        return -1;
+        return 1;
     }
     if ((fileAttr & FILE_ATTRIBUTE_DIRECTORY) != FILE_ATTRIBUTE_DIRECTORY) {
         fprintf(stderr, "Second argument provided is not a directory.\n");
-        return -1;
+        return 1;
     }
 #else
     struct stat buff = {0};
     if (stat(*(argv + 1), &buff) == -1) {
         fprintf(stderr, "Invalid directory provided.\n");
-        return -1;
+        return 1;
     }
     if (!S_ISDIR(buff.st_mode)) {
         fprintf(stderr, "Second argument provided is not a directory.\n");
-        return -1;
+        return 1;
     }
 #endif
-    char *path;
-    char *bmp_path = malloc(sizeof(char)*(strlen_c(*(argv + 1)) + 2));
+    bmp_path = malloc(sizeof(char)*(strlen_c(*(argv + 1)) + 2));
     strcpy_c(bmp_path, *(argv + 1));
 #ifdef _WIN32
     strcat_c(bmp_path, "\\");
@@ -125,16 +148,16 @@ int main(int argc, char **argv) {
 #endif
     size_t size = 0; // have to leave space for NULL at the end of the array
 #ifdef _WIN32
-    path = malloc(sizeof(char)*(strlen_c(bmp_path) + 6));
+    path = malloc(sizeof(char)*(len + 6));
     strcpy_c(path, *(argv + 1));
     strcat_c(path, "\\*.bmp");
     WIN32_FIND_DATAA find = {0};
     HANDLE first = FindFirstFileA(path, &find);
     free(path);
+    path = NULL;
     if (first == INVALID_HANDLE_VALUE) {
-        free(bmp_path);
         fprintf(stderr, "No .bmp files found in specified directory.\n");
-        return -1;
+        return 1;
     }
 #else
     struct dirent *entry;
@@ -142,10 +165,10 @@ int main(int argc, char **argv) {
     if (dir == NULL) {
         fprintf(stderr, "Could not open directory.\n");
         perror("Error");
-        return -1;
+        return 1;
     }
 #endif
-    const char **array = malloc(sizeof(char*)*MIN_ARR_SIZE);
+    array = malloc(sizeof(char*)*MIN_ARR_SIZE);
     const char **ptr = array;
     char *str;
 #ifdef _WIN32
@@ -189,26 +212,20 @@ int main(int argc, char **argv) {
     FILE *bmp = fopen(*array, "rb");
     if (bmp == NULL) {
         fprintf(stderr, "Error trying to open file: %s\n", *array);
-        free_array(array);
-        free(bmp_path);
-        return -1;
+        return 1;
     }
     bmp_header header;
     bmp_info_header info_header;
     fread(&header, sizeof(char), sizeof(header), bmp);
     if (header.px_arr_offset != PIX_OFFSET) {
-        free_array(array);
-        free(bmp_path);
         fprintf(stderr, "Invalid BMP format, offset expected = 54 bytes, offset found = %i\n", header.px_arr_offset);
-        return -1;
+        return 1;
     }
     fread(&info_header, sizeof(char), sizeof(info_header), bmp);
     if (info_header.pixel_depth != 24 && info_header.pixel_depth != 32) {
-        free_array(array);
-        free(bmp_path);
         fprintf(stderr, "Invalid BMP format, bit-depth expected: 24 bpp, depth found = %i bpp\n",
                 info_header.pixel_depth);
-        return -1;
+        return 1;
     }
     fclose(bmp);
     unsigned long width = info_header.bmp_width;
@@ -220,13 +237,13 @@ int main(int argc, char **argv) {
         }
         term_if_zero(width);
     }
-    if (strcmp_c(clr_space, "C420") == 0) {
+    if (strcmp_c(clr_space, "C420") == 0 || strcmp_c(clr_space, "C410")) {
         if (info_header.bmp_height % 2 != 0) {
             --height;
         }
         term_if_zero(height);
     }
-    if (strcmp_c(clr_space, "C411") == 0) {
+    if (strcmp_c(clr_space, "C411") == 0 || strcmp_c(clr_space, "C410")) {
         unsigned char rem = info_header.bmp_width % 4;
         if (rem != 0) {
             if (info_header.bmp_width <= rem) {
@@ -239,16 +256,18 @@ int main(int argc, char **argv) {
     char t[sizeof(char)*(UND_TIME_MAX_LEN + 12)];
     strcpy_c(t, "CREATED_ON=");
     strcat_c(t, curr_time);
-    const char *yuv_h = yuv_header(width, height, rate, 1, 'p', 1, 1, clr_space, t);
+    yuv_h = yuv_header(width, height, rate, 1, 'p', 1, 1, clr_space, t);
     if (yuv_h == NULL) {
-        free(bmp_path);
-        free_array(array);
         fprintf(stderr, "Invalid parameters for YUV4MPEG2 file.\n");
-        return -1;
+        return 1;
     }
-    char *vid_path = malloc(sizeof(char)*(len + UND_TIME_MAX_LEN + 15)); // path for generated .y4m file
+    vid_path = malloc(sizeof(char)*(len + UND_TIME_MAX_LEN + 15)); // path for generated .y4m file
     strcpy_c(vid_path, bmp_path);
     free(bmp_path);
+    bmp_path = NULL;
+#ifndef _WIN32
+    chrcat_c(vid_path, '/');
+#endif
     strcat_c(vid_path, "Y4M_Video_");
     strcat_c(vid_path, curr_time);
     strcat_c(vid_path, ".y4m");
@@ -256,20 +275,20 @@ int main(int argc, char **argv) {
     if (vid == NULL) {
         fprintf(stderr, "Error opening video output path: \"%s\"\n", vid_path);
         perror("Error type");
-        free_ptrs(2, vid_path, (char *) yuv_h);
-        free_array(array);
-        return -1;
+        return 1;
     }
     free(vid_path);
+    vid_path = NULL;
     fwrite(yuv_h, sizeof(char), strlen_c(yuv_h), vid);
     free((char *) yuv_h);
+    yuv_h = NULL;
     const char *frame = "FRAME\n";
     long int start_offset = -((long) (info_header.bmp_width*3 + padding)); // same for all colour sub-sampling cases
     long int repeat_offset = -((long) ((width + info_header.bmp_width)*3 + padding));
-    colour *colours = malloc(width*height*3); // I have opted for heap alloc. to avoid repeated calls to fread(), the
-    if (colours == NULL) { // tests I have run have shown the comp. time to have been reduced by at least 60%
+    colours = malloc(width*height*3); // I have opted for heap alloc. to avoid repeated calls to fread(), the
+    if (!colours) { // tests I have run have shown the comp. time to have been reduced by at least 60%
         fprintf(stderr, "Memory allocation error, likely due to overly large BMP file size.\n");
-        return -1;
+        return 1;
     }
     colour *clr_ptr;
     unsigned int total_reps = width*height; // guaranteed to never be larger than 4294967295
@@ -277,12 +296,12 @@ int main(int argc, char **argv) {
     if (strcmp_c(clr_space, "C444") == 0) { // uncompressed case - BMP pixel array size = FRAME pixel array size
         while (*arr) { // lots of repetition below, but better to avoid function calls
             fputs(frame, vid); // each frame starts with "FRAME\n"
-            bmp = fopen(*arr++, "rb");
+            bmp = fopen(*arr, "rb");
             if (!bmp) {
-                fprintf(stderr, "File \"%s\" could not be opened.\n", *--arr);
-                free_array(array);
-                return -1;
+                fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
+                return 1;
             }
+            check_dim(bmp, *arr++);
             fseek(bmp, start_offset, SEEK_END); // seek to end row of pixel array in BMP
             clr_ptr = colours;
             for (i = 0; i < height; ++i) { // read in image in inverse row order
@@ -309,12 +328,12 @@ int main(int argc, char **argv) {
         unsigned int half_reps = total_reps/2;
         while (*arr) {
             fputs(frame, vid);
-            bmp = fopen(*arr++, "rb");
+            bmp = fopen(*arr, "rb");
             if (!bmp) {
-                fprintf(stderr, "File \"%s\" could not be opened.\n", *--arr);
-                free_array(array);
-                return -1;
+                fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
+                return 1;
             }
+            check_dim(bmp, *arr++);
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
             for (i = 0; i < height; ++i) {
@@ -349,12 +368,12 @@ int main(int argc, char **argv) {
         unsigned int j; // nested loop counter
         while (*arr) {
             fputs(frame, vid);
-            bmp = fopen(*arr++, "rb");
+            bmp = fopen(*arr, "rb");
             if (!bmp) {
-                fprintf(stderr, "File \"%s\" could not be opened.\n", *--arr);
-                free_array(array);
-                return -1;
+                fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
+                return 1;
             }
+            check_dim(bmp, *arr++);
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
             for (i = 0; i < height; ++i) {
@@ -391,16 +410,16 @@ int main(int argc, char **argv) {
             }
         }
     }
-    else { // C411 - video frame size = (1/2) * BMP pixel array size
+    else if (strcmp_c(clr_space, "C411") == 0) { // C411 - video frame size = (1/2) * BMP pixel array size
         unsigned int quarter_reps = total_reps/4; // no truncation, total_reps guaranteed to be multiple of 4 by here
         while (*arr) {
             fputs(frame, vid);
-            bmp = fopen(*arr++, "rb");
+            bmp = fopen(*arr, "rb");
             if (!bmp) {
-                fprintf(stderr, "File \"%s\" could not be opened.\n", *--arr);
-                free_array(array);
-                return -1;
+                fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
+                return 1;
             }
+            check_dim(bmp, *arr++);
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
             for (i = 0; i < height; ++i) {
@@ -425,20 +444,78 @@ int main(int argc, char **argv) {
             }
         }
     }
+    /* warning: to the best of my knowledge, 4:1:0 subsampling is not supported by any media player, not even VLC, and
+     * does not appear to be supported be a supported format by ffmpeg either */
+    else { // C410 - video frame size = (5/12) * BMP pixel array size
+        printf("Warning: 4:1:0 colour subsampling is a largely unsupported format: consider using 4:2:0 instead.\n");
+        if (height != info_header.bmp_height) {
+            start_offset -= (long) (padding + 3*info_header.bmp_width);
+        }
+        unsigned int quarter_width = width/4; // no truncation, width is multiple of 4 by here
+        unsigned int half_height = height/2; // height is even by here
+        colour *next;
+        unsigned int j; // nested loop counter
+        while (*arr) {
+            fputs(frame, vid);
+            bmp = fopen(*arr, "rb");
+            if (!bmp) {
+                fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
+                return 1;
+            }
+            check_dim(bmp, *arr++);
+            fseek(bmp, start_offset, SEEK_END);
+            clr_ptr = colours;
+            for (i = 0; i < height; ++i) {
+                fread(clr_ptr, sizeof(colour), width, bmp);
+                fseek(bmp, repeat_offset, SEEK_CUR);
+                clr_ptr += width;
+            }
+            fclose(bmp);
+            clr_ptr = colours;
+            for (i = 0; i < total_reps; ++i) { // write full Y plane
+                fputc(get_Y(clr_ptr++), vid);
+            }
+            clr_ptr = colours;
+            next = colours + width; // pointer to the pixel 'below' the pixel pointed to by clr_ptr
+            for (i = 0; i < half_height; ++i) { // write 1/8 Cb plane, since 8 pixels share same Cb comp.
+                for (j = 0; j < quarter_width; ++j) { // better not to avoid nested loop here
+                    fputc(get_Cb_avg8(clr_ptr, clr_ptr + 1, clr_ptr + 2, clr_ptr + 3,
+                                      next, next + 1, next + 2, next + 3), vid);
+                    clr_ptr += 4;
+                    next += 4;
+                }
+                clr_ptr += width; // 'move' both pointers down by 1 row
+                next += width;
+            }
+            clr_ptr = colours;
+            next = colours + width;
+            for (i = 0; i < half_height; ++i) { // same as for Cb plane
+                for (j = 0; j < quarter_width; ++j) {
+                    fputc(get_Cr_avg8(clr_ptr, clr_ptr + 1, clr_ptr + 2, clr_ptr + 3,
+                                      next, next + 1, next + 2, next + 3), vid);
+                    clr_ptr += 4;
+                    next += 4;
+                }
+                clr_ptr += width;
+                next += width;
+            }
+        }
+    }
     free(colours);
+    colours = NULL;
     size_t y4m_file_size = ftell(vid); // will be very big!!!
     fclose(vid);
     arr = array;
     if (delete) { // more efficient to create separate loop, rather than re-evaluating condition within above loop
         while (*arr) {
-            if (remove(*arr++) != 0) {
-                free_array(array);
+            if (remove(*arr++)) {
                 fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *--arr);
-                return -1;
+                return 1;
             }
         }
     }
     free_array(array);
+    array = NULL;
     if (give_size) {
         printf("File size: %zu bytes\n", y4m_file_size);
     }
@@ -464,13 +541,13 @@ static inline void delegate_flags(const char *arg, bool *del, bool *tim, bool *s
                         "(to delete all bmp files used to generate the video),\n\"-time\" "
                         "(to show the length of time taken to generate the video) and\n\"-size\" "
                         "(to give the generated video's file size).\n", arg);
-        exit(-1);
+        exit(1);
     }
 }
 
 static inline void term_if_zero(size_t val) {
     if (val == 0) {
         fprintf(stderr, "Resultant video would have zero size. Provide larger bitmaps.\n");
-        exit(-1);
+        abort();
     }
 }
