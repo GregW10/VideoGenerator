@@ -29,7 +29,7 @@ void clean(void) {
 }
 
 _Noreturn void handler(int signal) {
-    clean();
+    // clean();
     exit(1);
 }
 
@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
     time_t beg_time = time(NULL);
     if (argc > 7 || argc < 2) {
         fprintf(stderr, "Invalid number of command-line arguments provided.\n");
-        return -1;
+        return 1;
     }
     bool delete = false;
     bool timed = false;
@@ -283,25 +283,27 @@ int main(int argc, char **argv) {
     free((char *) yuv_h);
     yuv_h = NULL;
     const char *frame = "FRAME\n";
-    long int start_offset = -((long) (info_header.bmp_width*3 + padding)); // same for all colour sub-sampling cases
-    long int repeat_offset = -((long) ((width + info_header.bmp_width)*3 + padding));
-    colours = malloc(width*height*3); // I have opted for heap alloc. to avoid repeated calls to fread(), the
-    if (!colours) { // tests I have run have shown the comp. time to have been reduced by at least 60%
+    long start_offset = -((long) (info_header.bmp_width*3 + padding)); // same for all colour sub-sampling cases
+    long repeat_offset = -((long) ((width + info_header.bmp_width)*3 + padding));
+    colours = malloc(width*height*sizeof(unsigned char)); // I have opted for heap alloc. to avoid repeated calls to
+    if (!colours) { // fread(), the tests I have run have shown the comp. time to have been reduced by at least 60%
         fprintf(stderr, "Memory allocation error, likely due to overly large BMP file size.\n");
         return 1;
     }
+    char *final_clrs = malloc(width*height*sizeof(unsigned char));
+    char *fclr_ptr = final_clrs;
     colour *clr_ptr;
     unsigned int total_reps = width*height; // guaranteed to never be larger than 4294967295
     unsigned int i; // loop counter
     if (strcmp_c(clr_space, "C444") == 0) { // uncompressed case - BMP pixel array size = FRAME pixel array size
-        while (*arr) { // lots of repetition below, but better to avoid function calls
+        for (;*arr; ++arr) { // lots of repetition below, but better to avoid function calls
             fputs(frame, vid); // each frame starts with "FRAME\n"
             bmp = fopen(*arr, "rb");
             if (!bmp) {
                 fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
                 return 1;
             }
-            check_dim(bmp, *arr++);
+            check_dim(bmp, *arr);
             fseek(bmp, start_offset, SEEK_END); // seek to end row of pixel array in BMP
             clr_ptr = colours;
             for (i = 0; i < height; ++i) { // read in image in inverse row order
@@ -310,30 +312,50 @@ int main(int argc, char **argv) {
                 clr_ptr += width;
             }
             fclose(bmp);
+            if (delete) // not great to re-evaluate this within loop, but leads to cleaner code, and <0.0001% extra time
+                if (remove(*arr)) {
+                    fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *arr);
+                    return 1;
+                }
             clr_ptr = colours;
-            for (i = 0; i < total_reps; ++i) { // write Y plane
-                fputc(get_Y(clr_ptr++), vid);
-            }
-            clr_ptr = colours;
-            for (i = 0; i < total_reps; ++i) { // write Cb plane
-                fputc(get_Cb(clr_ptr++), vid);
-            }
-            clr_ptr = colours;
-            for (i = 0; i < total_reps; ++i) { // write Cr plane
-                fputc(get_Cr(clr_ptr++), vid);
-            }
+            // for (i = 0; i < total_reps; ++i) { // write Y plane
+            //     fputc(get_Y(*clr_ptr++), vid);
+            // }
+            // clr_ptr = colours;
+            // for (i = 0; i < total_reps; ++i) { // write Cb plane
+            //     fputc(get_Cb(*clr_ptr++), vid);
+            // }
+            // clr_ptr = colours;
+            // for (i = 0; i < total_reps; ++i) { // write Cr plane
+            //     fputc(get_Cr(*clr_ptr++), vid);
+            // }
+            fclr_ptr = final_clrs;
+            for_each(clr_ptr, sizeof(colour), total_reps, to_ycbcr);
+            correct_order((unsigned char *) clr_ptr, (unsigned char *) fclr_ptr, total_reps);
+            fwrite(fclr_ptr, sizeof(colour), total_reps, vid);
+            // for (i = 0; i < total_reps; ++i) { // write Y plane
+            //     fputc((*clr_ptr++).b, vid);
+            // }
+            // clr_ptr = colours;
+            // for (i = 0; i < total_reps; ++i) { // write Cb plane
+            //     fputc((*clr_ptr++).g, vid);
+            // }
+            // clr_ptr = colours;
+            // for (i = 0; i < total_reps; ++i) { // write Cr plane
+            //     fputc((*clr_ptr++).r, vid);
+            // }
         }
     }
     else if (strcmp_c(clr_space, "C422") == 0) { // video frame size = (2/3) * BMP pixel array size
         unsigned int half_reps = total_reps/2;
-        while (*arr) {
+        for (; *arr; ++arr) {
             fputs(frame, vid);
             bmp = fopen(*arr, "rb");
             if (!bmp) {
                 fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
                 return 1;
             }
-            check_dim(bmp, *arr++);
+            check_dim(bmp, *arr);
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
             for (i = 0; i < height; ++i) {
@@ -342,18 +364,23 @@ int main(int argc, char **argv) {
                 clr_ptr += width;
             }
             fclose(bmp);
+            if (delete)
+                if (remove(*arr)) {
+                    fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *arr);
+                    return 1;
+                }
             clr_ptr = colours;
             for (i = 0; i < total_reps; ++i) { // write full Y plane
-                fputc(get_Y(clr_ptr++), vid);
+                fputc(get_Y(*clr_ptr++), vid);
             }
             clr_ptr = colours;
             for (i = 0; i < half_reps; ++i) { // write 'half' Cb plane, since 2 pixels share same Cb comp.
-                fputc(get_Cb_avg2(clr_ptr, clr_ptr + 1), vid); // can't use ++ inside func call here - UB
+                fputc(get_Cb_avg2(*clr_ptr, *(clr_ptr + 1)), vid); // can't use ++ inside func call here - UB
                 clr_ptr += 2;
             }
             clr_ptr = colours;
             for (i = 0; i < half_reps; ++i) { // same as for Cb plane
-                fputc(get_Cr_avg2(clr_ptr, clr_ptr + 1), vid);
+                fputc(get_Cr_avg2(*clr_ptr, *(clr_ptr + 1)), vid);
                 clr_ptr += 2;
             }
         }
@@ -366,14 +393,14 @@ int main(int argc, char **argv) {
         unsigned int half_height = height/2; // no 0.5 truncation, width and height are guaranteed to be even by here
         colour *next;
         unsigned int j; // nested loop counter
-        while (*arr) {
+        for (; *arr; ++arr) {
             fputs(frame, vid);
             bmp = fopen(*arr, "rb");
             if (!bmp) {
                 fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
                 return 1;
             }
-            check_dim(bmp, *arr++);
+            check_dim(bmp, *arr);
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
             for (i = 0; i < height; ++i) {
@@ -382,15 +409,20 @@ int main(int argc, char **argv) {
                 clr_ptr += width;
             }
             fclose(bmp);
+            if (delete) // not great to re-evaluate this within loop, but leads to cleaner code, and <0.0001% extra time
+                if (remove(*arr)) {
+                    fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *arr);
+                    return 1;
+                }
             clr_ptr = colours;
             for (i = 0; i < total_reps; ++i) { // write full Y plane
-                fputc(get_Y(clr_ptr++), vid);
+                fputc(get_Y(*clr_ptr++), vid);
             }
             clr_ptr = colours;
             next = colours + width; // pointer to the pixel 'below' the pixel pointed to by clr_ptr
             for (i = 0; i < half_height; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
                 for (j = 0; j < half_width; ++j) { // better not to avoid nested loop here
-                    fputc(get_Cb_avg4(clr_ptr, clr_ptr + 1, next, next + 1), vid);
+                    fputc(get_Cb_avg4(*clr_ptr, *(clr_ptr + 1), *next, *(next + 1)), vid);
                     clr_ptr += 2;
                     next += 2;
                 }
@@ -401,7 +433,7 @@ int main(int argc, char **argv) {
             next = colours + width;
             for (i = 0; i < half_height; ++i) { // same as for Cb plane
                 for (j = 0; j < half_width; ++j) {
-                    fputc(get_Cr_avg4(clr_ptr, clr_ptr + 1, next, next + 1), vid);
+                    fputc(get_Cr_avg4(*clr_ptr, *(clr_ptr + 1), *next, *(next + 1)), vid);
                     clr_ptr += 2;
                     next += 2;
                 }
@@ -412,7 +444,7 @@ int main(int argc, char **argv) {
     }
     else if (strcmp_c(clr_space, "C411") == 0) { // C411 - video frame size = (1/2) * BMP pixel array size
         unsigned int quarter_reps = total_reps/4; // no truncation, total_reps guaranteed to be multiple of 4 by here
-        while (*arr) {
+        for (; *arr; ++arr) {
             fputs(frame, vid);
             bmp = fopen(*arr, "rb");
             if (!bmp) {
@@ -428,18 +460,23 @@ int main(int argc, char **argv) {
                 clr_ptr += width;
             }
             fclose(bmp);
+            if (delete)
+                if (remove(*arr)) {
+                    fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *arr);
+                    return 1;
+                }
             clr_ptr = colours;
             for (i = 0; i < total_reps; ++i) { // write full Y plane
-                fputc(get_Y(clr_ptr++), vid);
+                fputc(get_Y(*clr_ptr++), vid);
             }
             clr_ptr = colours;
             for (i = 0; i < quarter_reps; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
-                fputc(get_Cb_avg4(clr_ptr, clr_ptr + 1, clr_ptr + 2, clr_ptr + 3), vid);
+                fputc(get_Cb_avg4(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3)), vid);
                 clr_ptr += 4;
             }
             clr_ptr = colours;
             for (i = 0; i < quarter_reps; ++i) { // same as for Cb plane
-                fputc(get_Cr_avg4(clr_ptr, clr_ptr + 1, clr_ptr + 2, clr_ptr + 3), vid);
+                fputc(get_Cr_avg4(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3)), vid);
                 clr_ptr += 4;
             }
         }
@@ -455,7 +492,7 @@ int main(int argc, char **argv) {
         unsigned int half_height = height/2; // height is even by here
         colour *next;
         unsigned int j; // nested loop counter
-        while (*arr) {
+        for (; *arr; ++arr) {
             fputs(frame, vid);
             bmp = fopen(*arr, "rb");
             if (!bmp) {
@@ -471,16 +508,21 @@ int main(int argc, char **argv) {
                 clr_ptr += width;
             }
             fclose(bmp);
+            if (delete)
+                if (remove(*arr)) {
+                    fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *arr);
+                    return 1;
+                }
             clr_ptr = colours;
             for (i = 0; i < total_reps; ++i) { // write full Y plane
-                fputc(get_Y(clr_ptr++), vid);
+                fputc(get_Y(*clr_ptr++), vid);
             }
             clr_ptr = colours;
             next = colours + width; // pointer to the pixel 'below' the pixel pointed to by clr_ptr
             for (i = 0; i < half_height; ++i) { // write 1/8 Cb plane, since 8 pixels share same Cb comp.
                 for (j = 0; j < quarter_width; ++j) { // better not to avoid nested loop here
-                    fputc(get_Cb_avg8(clr_ptr, clr_ptr + 1, clr_ptr + 2, clr_ptr + 3,
-                                      next, next + 1, next + 2, next + 3), vid);
+                    fputc(get_Cb_avg8(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3),
+                                      *next, *(next + 1), *(next + 2), *(next + 3)), vid);
                     clr_ptr += 4;
                     next += 4;
                 }
@@ -491,8 +533,8 @@ int main(int argc, char **argv) {
             next = colours + width;
             for (i = 0; i < half_height; ++i) { // same as for Cb plane
                 for (j = 0; j < quarter_width; ++j) {
-                    fputc(get_Cr_avg8(clr_ptr, clr_ptr + 1, clr_ptr + 2, clr_ptr + 3,
-                                      next, next + 1, next + 2, next + 3), vid);
+                    fputc(get_Cr_avg8(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3),
+                                      *next, *(next + 1), *(next + 2), *(next + 3)), vid);
                     clr_ptr += 4;
                     next += 4;
                 }
@@ -505,15 +547,15 @@ int main(int argc, char **argv) {
     colours = NULL;
     size_t y4m_file_size = ftell(vid); // will be very big!!!
     fclose(vid);
-    arr = array;
-    if (delete) { // more efficient to create separate loop, rather than re-evaluating condition within above loop
-        while (*arr) {
-            if (remove(*arr++)) {
-                fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *--arr);
-                return 1;
-            }
-        }
-    }
+    // arr = array;
+    // if (delete) { // more efficient to create separate loop, rather than re-evaluating condition within above loop
+    //     while (*arr) {
+    //         if (remove(*arr++)) {
+    //             fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *--arr);
+    //             return 1;
+    //         }
+    //     }
+    // }
     free_array(array);
     array = NULL;
     if (give_size) {
