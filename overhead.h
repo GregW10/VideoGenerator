@@ -43,8 +43,8 @@ typedef struct {
     unsigned int bmp_height;
     unsigned short num_panes; // must be 1
     unsigned short pixel_depth; // bpp
-    unsigned int compression_method; // currently only supporting BI_RGB (no compression)
-    unsigned int image_size; // should be zero for BI_RGB files
+    unsigned int compression_method; // currently only supporting BI_RGB (no compression - so zero)
+    unsigned int image_size; // can be zero for BI_RGB files
     unsigned int hor_res; // horizontal resolution (can be zero)
     unsigned int ver_res; // vertical resolution (can be zero)
     unsigned int clr_palette; // can be zero
@@ -52,8 +52,8 @@ typedef struct {
 } bmp_info_header;
 #pragma pack(pop)
 // no NULL checks in the bottom functions to reduce comp. time (UB if NULL passed)
-static inline unsigned char get_Y(const colour *col) { // get Luma (luminance) component from RGB values
-    long double ld = 0.299l*((long double) col->r) + 0.587l*((long double) col->g) + 0.114l*((long double) col->b);
+static inline unsigned char get_Y(const colour col) { // get Luma (luminance) component from RGB values
+    long double ld = 0.299l*((long double) col.r) + 0.587l*((long double) col.g) + 0.114l*((long double) col.b);
     unsigned char retval = (unsigned char) ld;
     if (ld - retval >= 0.5 && retval != 255) { // to avoid the function call to round() (in math.h)
         ++retval;
@@ -62,8 +62,8 @@ static inline unsigned char get_Y(const colour *col) { // get Luma (luminance) c
 }
 // variadic arguments (<stdarg.h>) not used for the below functions in favour of computing time, since these functions
 // can easily be called billions of times during one execution of the program
-static inline unsigned char get_Cb(const colour *col) { // get Cb (blue chrominance) component from RGB values
-    long double ld = -0.169l*((long double)col->r) - 0.331l*((long double)col->g) + 0.500l*((long double)col->b) + 128;
+static inline unsigned char get_Cb(const colour col) { // get Cb (blue chrominance) component from RGB values
+    long double ld = -0.169l*((long double)col.r) - 0.331l*((long double)col.g) + 0.500l*((long double)col.b) + 128;
     unsigned char retval = (unsigned char) ld;
     if (ld - retval >= 0.5 && retval != 255) {
         ++retval;
@@ -71,9 +71,9 @@ static inline unsigned char get_Cb(const colour *col) { // get Cb (blue chromina
     return retval;
 }
 
-static inline unsigned char get_Cb_avg2(const colour *col, const colour *col2) { // Cb average from two RGB colours
-    long double ld = -0.169l*((long double)col->r) - 0.331l*((long double)col->g) + 0.500l*((long double)col->b) + 128;
-    long double ld2 = -0.169l*((long double)col2->r)-0.331l*((long double)col2->g)+0.500l*((long double)col2->b) + 128;
+static inline unsigned char get_Cb_avg2(const colour col, const colour col2) { // Cb average from two RGB colours
+    long double ld = -0.169l*((long double)col.r) - 0.331l*((long double)col.g) + 0.500l*((long double)col.b) + 128;
+    long double ld2 = -0.169l*((long double)col2.r)-0.331l*((long double)col2.g)+0.500l*((long double)col2.b) + 128;
     long double avg = ((ld + ld2)/2); // exactly the same as individ. taking avgs of R,G,&B and then doing calc.
     unsigned char retval = (unsigned char) avg;
     if (avg - retval >= 0.5 && retval != 255) {
@@ -82,11 +82,11 @@ static inline unsigned char get_Cb_avg2(const colour *col, const colour *col2) {
     return retval;
 }
 // average Cb value for four RGB colours:
-static inline unsigned char get_Cb_avg4(const colour *col, const colour *col2, const colour *col3, const colour *col4) {
-    long double ld = -0.169l*((long double)col->r) - 0.331l*((long double)col->g) + 0.500l*((long double)col->b) + 128;
-    long double ld2 = -0.169l*((long double)col2->r)-0.331l*((long double)col2->g)+0.500l*((long double)col2->b) + 128;
-    long double ld3 = -0.169l*((long double)col3->r)-0.331l*((long double)col3->g)+0.500l*((long double)col3->b) + 128;
-    long double ld4 = -0.169l*((long double)col4->r)-0.331l*((long double)col4->g)+0.500l*((long double)col4->b) + 128;
+static inline unsigned char get_Cb_avg4(const colour col, const colour col2, const colour col3, const colour col4) {
+    long double ld = -0.169l*((long double)col.r) - 0.331l*((long double)col.g) + 0.500l*((long double)col.b) + 128;
+    long double ld2 = -0.169l*((long double)col2.r)-0.331l*((long double)col2.g)+0.500l*((long double)col2.b) + 128;
+    long double ld3 = -0.169l*((long double)col3.r)-0.331l*((long double)col3.g)+0.500l*((long double)col3.b) + 128;
+    long double ld4 = -0.169l*((long double)col4.r)-0.331l*((long double)col4.g)+0.500l*((long double)col4.b) + 128;
     long double avg = ((ld + ld2 + ld3 + ld4)/4);
     unsigned char retval = (unsigned char) avg;
     if (avg - retval >= 0.5 && retval != 255) {
@@ -95,16 +95,16 @@ static inline unsigned char get_Cb_avg4(const colour *col, const colour *col2, c
     return retval;
 }
 // average Cb value for 8 RGB colours: (again, no varargs to increase efficiency)
-static inline unsigned char get_Cb_avg8(const colour *col, const colour *col2, const colour *col3, const colour *col4,
-                                        const colour *col5, const colour *col6, const colour *col7, const colour *col8){
-    long double ld = -0.169l*((long double)col->r) - 0.331l*((long double)col->g) + 0.500l*((long double)col->b) + 128;
-    long double ld2 = -0.169l*((long double)col2->r)-0.331l*((long double)col2->g)+0.500l*((long double)col2->b) + 128;
-    long double ld3 = -0.169l*((long double)col3->r)-0.331l*((long double)col3->g)+0.500l*((long double)col3->b) + 128;
-    long double ld4 = -0.169l*((long double)col4->r)-0.331l*((long double)col4->g)+0.500l*((long double)col4->b) + 128;
-    long double ld5 = -0.169l*((long double)col5->r)-0.331l*((long double)col5->g)+0.500l*((long double)col5->b) + 128;
-    long double ld6 = -0.169l*((long double)col6->r)-0.331l*((long double)col6->g)+0.500l*((long double)col6->b) + 128;
-    long double ld7 = -0.169l*((long double)col7->r)-0.331l*((long double)col7->g)+0.500l*((long double)col7->b) + 128;
-    long double ld8 = -0.169l*((long double)col8->r)-0.331l*((long double)col8->g)+0.500l*((long double)col8->b) + 128;
+static inline unsigned char get_Cb_avg8(const colour col, const colour col2, const colour col3, const colour col4,
+                                        const colour col5, const colour col6, const colour col7, const colour col8){
+    long double ld = -0.169l*((long double)col.r) - 0.331l*((long double)col.g) + 0.500l*((long double)col.b) + 128;
+    long double ld2 = -0.169l*((long double)col2.r)-0.331l*((long double)col2.g)+0.500l*((long double)col2.b) + 128;
+    long double ld3 = -0.169l*((long double)col3.r)-0.331l*((long double)col3.g)+0.500l*((long double)col3.b) + 128;
+    long double ld4 = -0.169l*((long double)col4.r)-0.331l*((long double)col4.g)+0.500l*((long double)col4.b) + 128;
+    long double ld5 = -0.169l*((long double)col5.r)-0.331l*((long double)col5.g)+0.500l*((long double)col5.b) + 128;
+    long double ld6 = -0.169l*((long double)col6.r)-0.331l*((long double)col6.g)+0.500l*((long double)col6.b) + 128;
+    long double ld7 = -0.169l*((long double)col7.r)-0.331l*((long double)col7.g)+0.500l*((long double)col7.b) + 128;
+    long double ld8 = -0.169l*((long double)col8.r)-0.331l*((long double)col8.g)+0.500l*((long double)col8.b) + 128;
     long double avg = ((ld + ld2 + ld3 + ld4 + ld5 + ld6 + ld7 + ld8)/4);
     unsigned char retval = (unsigned char) avg;
     if (avg - retval >= 0.5 && retval != 255) {
@@ -113,8 +113,8 @@ static inline unsigned char get_Cb_avg8(const colour *col, const colour *col2, c
     return retval;
 }
 
-static inline unsigned char get_Cr(const colour *col) { // get Cr (red chrominance) component from RGB values
-    long double ld = 0.500l*((long double) col->r) - 0.419l*((long double) col->g) - 0.081l*((long double)col->b) + 128;
+static inline unsigned char get_Cr(const colour col) { // get Cr (red chrominance) component from RGB values
+    long double ld = 0.500l*((long double) col.r) - 0.419l*((long double) col.g) - 0.081l*((long double)col.b) + 128;
     unsigned char retval = (unsigned char) ld;
     if (ld - retval >= 0.5 && retval != 255) {
         ++retval;
@@ -122,9 +122,9 @@ static inline unsigned char get_Cr(const colour *col) { // get Cr (red chrominan
     return retval;
 }
 
-static inline unsigned char get_Cr_avg2(const colour *col, const colour *col2) { // Cr average from two RGB colours
-    long double ld = 0.500l*((long double)col->r) - 0.419l*((long double)col->g) - 0.081l*((long double)col->b) + 128;
-    long double ld2 = 0.500l*((long double)col2->r)-0.419l*((long double)col2->g)-0.081l*((long double)col2->b) + 128;
+static inline unsigned char get_Cr_avg2(const colour col, const colour col2) { // Cr average from two RGB colours
+    long double ld = 0.500l*((long double)col.r) - 0.419l*((long double)col.g) - 0.081l*((long double)col.b) + 128;
+    long double ld2 = 0.500l*((long double)col2.r)-0.419l*((long double)col2.g)-0.081l*((long double)col2.b) + 128;
     long double avg = ((ld + ld2)/2);
     unsigned char retval = (unsigned char) avg;
     if (avg - retval >= 0.5 && retval != 255) {
@@ -133,11 +133,11 @@ static inline unsigned char get_Cr_avg2(const colour *col, const colour *col2) {
     return retval;
 }
 // for 4 RGB colours:
-static inline unsigned char get_Cr_avg4(const colour *col, const colour *col2, const colour *col3, const colour *col4) {
-    long double ld = 0.500l*((long double)col->r) - 0.419l*((long double)col->g) - 0.081l*((long double)col->b) + 128;
-    long double ld2 = 0.500l*((long double)col2->r)-0.419l*((long double)col2->g)-0.081l*((long double)col2->b) + 128;
-    long double ld3 = 0.500l*((long double)col3->r)-0.419l*((long double)col3->g)-0.081l*((long double)col3->b) + 128;
-    long double ld4 = 0.500l*((long double)col4->r)-0.419l*((long double)col4->g)-0.081l*((long double)col4->b) + 128;
+static inline unsigned char get_Cr_avg4(const colour col, const colour col2, const colour col3, const colour col4) {
+    long double ld = 0.500l*((long double)col.r) - 0.419l*((long double)col.g) - 0.081l*((long double)col.b) + 128;
+    long double ld2 = 0.500l*((long double)col2.r)-0.419l*((long double)col2.g)-0.081l*((long double)col2.b) + 128;
+    long double ld3 = 0.500l*((long double)col3.r)-0.419l*((long double)col3.g)-0.081l*((long double)col3.b) + 128;
+    long double ld4 = 0.500l*((long double)col4.r)-0.419l*((long double)col4.g)-0.081l*((long double)col4.b) + 128;
     long double avg = ((ld + ld2 + ld3 + ld4)/4);
     unsigned char retval = (unsigned char) avg;
     if (avg - retval >= 0.5 && retval != 255) {
@@ -146,16 +146,16 @@ static inline unsigned char get_Cr_avg4(const colour *col, const colour *col2, c
     return retval;
 }
 // for 8 RGB colours
-static inline unsigned char get_Cr_avg8(const colour *col, const colour *col2, const colour *col3, const colour *col4,
-                                        const colour *col5, const colour *col6, const colour *col7, const colour *col8){
-    long double ld = 0.500l*((long double)col->r) - 0.419l*((long double)col->g) - 0.081l*((long double)col->b) + 128;
-    long double ld2 = 0.500l*((long double)col2->r)-0.419l*((long double)col2->g)-0.081l*((long double)col2->b) + 128;
-    long double ld3 = 0.500l*((long double)col3->r)-0.419l*((long double)col3->g)-0.081l*((long double)col3->b) + 128;
-    long double ld4 = 0.500l*((long double)col4->r)-0.419l*((long double)col4->g)-0.081l*((long double)col4->b) + 128;
-    long double ld5 = 0.500l*((long double)col5->r)-0.419l*((long double)col5->g)-0.081l*((long double)col5->b) + 128;
-    long double ld6 = 0.500l*((long double)col6->r)-0.419l*((long double)col6->g)-0.081l*((long double)col6->b) + 128;
-    long double ld7 = 0.500l*((long double)col7->r)-0.419l*((long double)col7->g)-0.081l*((long double)col7->b) + 128;
-    long double ld8 = 0.500l*((long double)col8->r)-0.419l*((long double)col8->g)-0.081l*((long double)col8->b) + 128;
+static inline unsigned char get_Cr_avg8(const colour col, const colour col2, const colour col3, const colour col4,
+                                        const colour col5, const colour col6, const colour col7, const colour col8){
+    long double ld = 0.500l*((long double)col.r) - 0.419l*((long double)col.g) - 0.081l*((long double)col.b) + 128;
+    long double ld2 = 0.500l*((long double)col2.r)-0.419l*((long double)col2.g)-0.081l*((long double)col2.b) + 128;
+    long double ld3 = 0.500l*((long double)col3.r)-0.419l*((long double)col3.g)-0.081l*((long double)col3.b) + 128;
+    long double ld4 = 0.500l*((long double)col4.r)-0.419l*((long double)col4.g)-0.081l*((long double)col4.b) + 128;
+    long double ld5 = 0.500l*((long double)col5.r)-0.419l*((long double)col5.g)-0.081l*((long double)col5.b) + 128;
+    long double ld6 = 0.500l*((long double)col6.r)-0.419l*((long double)col6.g)-0.081l*((long double)col6.b) + 128;
+    long double ld7 = 0.500l*((long double)col7.r)-0.419l*((long double)col7.g)-0.081l*((long double)col7.b) + 128;
+    long double ld8 = 0.500l*((long double)col8.r)-0.419l*((long double)col8.g)-0.081l*((long double)col8.b) + 128;
     long double avg = ((ld + ld2 + ld3 + ld4 + ld5 + ld6 + ld7 + ld8)/4);
     unsigned char retval = (unsigned char) avg;
     if (avg - retval >= 0.5 && retval != 255) {
@@ -501,7 +501,50 @@ static inline void check_dim(FILE *fp, const char *str) {
     fread(&width, sizeof(unsigned int), 1, fp);
     fread(&height, sizeof(unsigned int), 1, fp);
     if (width != expected_width || height != expected_height) {
-        fprintf(stderr, "The dimensions of BMP image \"%s\" do not match that of first BMP.\n", str);
+        fprintf(stderr, "The dimensions of BMP image \"%s\" do not match that of the first BMP.\n", str);
         abort();
     }
+}
+
+void for_each(void *arr, size_t element_size, size_t count, void (*func)(void*)) {
+    if (!arr || !func || !element_size || !count)
+        return;
+    for (size_t i = 0; i < count; ++i, arr += element_size) {
+        func(arr);
+    }
+}
+
+void to_ycbcr(void *bgr) {
+    static colour *col;
+    static unsigned char Y;
+    static unsigned char Cb;
+    col = bgr;
+    Y = get_Y(*col);
+    Cb = get_Cb(*col);
+    col->r = get_Cr(*col);
+    col->b = Y;
+    col->g = Cb;
+}
+
+void correct_order(const unsigned char *input_ycbcr, unsigned char *output, size_t num_elements) {
+    static const unsigned char *ptr;
+    static size_t i;
+    ptr = input_ycbcr;
+    for (i = 0; i < num_elements; ++i, ptr += 3) {
+        *output++ = *ptr;
+    }
+    printf("i: %zu\n", i);
+    printf("output: %p, ptr: %p", output, ptr);
+    ptr = input_ycbcr + 1;
+    for (i = 0; i < num_elements; ++i, ptr += 3) {
+        *output++ = *ptr;
+    }
+    printf("i: %zu\n", i);
+    printf("output: %p, ptr: %p", output, ptr);
+    ptr = input_ycbcr + 2;
+    for (i = 0; i < num_elements; ++i, ptr += 3) {
+        *output++ = *ptr;
+    }
+    printf("i: %zu\n", i);
+    printf("output: %p, ptr: %p", output, ptr);
 }
