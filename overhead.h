@@ -2,11 +2,74 @@
 // created by Gregor Hartl Watters on 13/09/2022
 //
 
+#pragma once
+
+#define Y4M_VERSION "1.0.0"
+
 #include <stdio.h>
 #include <stdarg.h>
 #include <time.h>
 #include <errno.h>
 #include <stdlib.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/stat.h> // even though all these header files have been ported to Windows, they tend to be wrappers around
+#include <dirent.h> // native Windows API functions, so I prefer to use the Windows API functions directly when on Win.
+#include <unistd.h>
+#endif
+
+#include <signal.h>
+
+#ifndef _WIN32
+#define RESET_TXT_FLAGS "\033[0m"
+#define BLACK_TXT_START "\033[30m"
+#define RED_TXT_START "\033[31m"
+#define GREEN_TXT_START "\033[32m"
+#define YELLOW_TXT_START "\033[33m"
+#define BLUE_TXT_START "\033[34m"
+#define MAGENTA_TXT_START "\033[35m"
+#define CYAN_TXT_START "\033[36m"
+#define WHITE_TXT_START "\033[37m"
+#define BOLD_TXT_START "\033[1m"
+#define UNDERLINED_TXT_START "\033[4m"
+#define BLACK_TXT(str) BLACK_TXT_START str RESET_TXT_FLAGS
+#define RED_TXT(str) RED_TXT_START str RESET_TXT_FLAGS
+#define GREEN_TXT(str) GREEN_TXT_START str RESET_TXT_FLAGS
+#define YELLOW_TXT(str) YELLOW_TXT_START str RESET_TXT_FLAGS
+#define BLUE_TXT(str) BLUE_TXT_START str RESET_TXT_FLAGS
+#define MAGENTA_TXT(str) MAGENTA_TXT_START str RESET_TXT_FLAGS
+#define CYAN_TXT(str) CYAN_TXT_START str RESET_TXT_FLAGS
+#define WHITE_TXT(str) WHITE_TXT_START str RESET_TXT_FLAGS
+#define BOLD_TXT(str) BOLD_TXT_START str RESET_TXT_FLAGS
+#define UNDERLINED_TXT(str) UNDERLINED_TXT_START str RESET_TXT_FLAGS
+#else
+#define RESET_TXT_FLAGS ""
+#define BLACK_TXT_START ""
+#define RED_TXT_START ""
+#define GREEN_TXT_START ""
+#define YELLOW_TXT_START ""
+#define BLUE_TXT_START ""
+#define MAGENTA_TXT_START ""
+#define CYAN_TXT_START ""
+#define WHITE_TXT_START ""
+#define BOLD_TXT_START ""
+#define UNDERLINED_TXT_START ""
+#define BLACK_TXT(str) str
+#define RED_TXT(str) str
+#define GREEN_TXT(str) str
+#define YELLOW_TXT(str) str
+#define BLUE_TXT(str) str
+#define MAGENTA_TXT(str) str
+#define CYAN_TXT(str) str
+#define WHITE_TXT(str) str
+#define BOLD_TXT(str) str
+#define UNDERLINED_TXT(str) str
+#endif
+
+#define LL_MIN (((long long) 1) << (sizeof(long long)*8 - 1))
+#define LL_MAX (((long long) -1) >> 1)
 
 #ifndef errno
 extern int errno;
@@ -184,9 +247,36 @@ static inline bool is_digit_c(char c) {
     return c >= 48 && c <= 57;
 }
 
-bool is_numeric(const char *str) {
+static inline bool is_whitespace(char c) {
+    return c >= 9 && c <= 13;
+}
+
+size_t replace(char *str, char to_replace, char replacement) {
+    if (!str || *str)
+        return 0;
+    size_t count = 0;
+    while (*str) {
+        if (*str == to_replace) {
+            *str = replacement;
+            ++count;
+        }
+        ++str;
+    }
+    return count;
+}
+
+bool is_numeric(const char *str, bool allow_whitespace) {
     if (!str || !*str) {
         return false;
+    }
+    if (allow_whitespace) {
+        while (*str) {
+            if (!is_digit_c(*str) && !is_whitespace(*str)) {
+                return false;
+            }
+            ++str;
+        }
+        return true;
     }
     while (*str) {
         if (!is_digit_c(*str++)) {
@@ -194,6 +284,45 @@ bool is_numeric(const char *str) {
         }
     }
     return true;
+}
+
+long long to_ll(const char *str, const char **end_char) {
+    /* end_char (if not NULL) will point to the address of the first non-convertible character (the null byte if all
+     * could be converted) */
+    if (!str) {
+        if (end_char)
+            *end_char = NULL;
+        return LL_MIN;
+    }
+    if (!*str) {
+        if (end_char)
+            *end_char = str;
+        return LL_MIN;
+    }
+    bool negative = false;
+    if (*str == '-') {
+        ++str;
+        if (!*str) {
+            if (end_char)
+                *end_char = --str;
+            return LL_MIN;
+        }
+        negative = true;
+    }
+    long long ret = 0;
+    size_t count = 0;
+    while (*str) {
+        if (!is_digit_c(*str)) {
+            if (end_char)
+                *end_char = str;
+            return count == 0 ? LL_MIN : (negative ? -ret : ret);
+        }
+        ret *= 10;
+        ret += *str++ - 48;
+        ++count;
+    }
+    *end_char = str;
+    return negative ? -ret : ret;
 }
 
 size_t strlen_c(const char *str) {
@@ -216,6 +345,28 @@ int strcmp_c(const char *restrict str1, const char *str2) {
         ++str2;
     }
     return *str1 - *str2;
+}
+
+static inline bool equal(const char *str1, const char *str2) { // convenience function
+    return strcmp_c(str1, str2) == 0;
+}
+
+static inline bool startswith_c(const char *str1, char c) {
+    return str1 && *str1 == c;
+}
+
+bool startswith(const char *str, const char *substr) {
+    if (!str || !substr)
+        return false;
+    size_t slen = strlen_c(str);
+    size_t sublen = strlen_c(substr);
+    if (slen < sublen)
+        return false;
+    while (*str && *substr) {
+        if (*str++ != *substr++)
+            return false;
+    }
+    return true;
 }
 
 int alfcmp_c(const char *restrict str1, const char *str2) { // treats upper and lower-case letters equally
@@ -509,9 +660,8 @@ static inline void check_dim(FILE *fp, const char *str) {
 void for_each(void *arr, size_t element_size, size_t count, void (*func)(void*)) {
     if (!arr || !func || !element_size || !count)
         return;
-    for (size_t i = 0; i < count; ++i, arr += element_size) {
+    for (size_t i = 0; i < count; ++i, arr += element_size)
         func(arr);
-    }
 }
 
 void to_ycbcr(void *bgr) {
@@ -526,25 +676,336 @@ void to_ycbcr(void *bgr) {
     col->g = Cb;
 }
 
-void correct_order(const unsigned char *input_ycbcr, unsigned char *output, size_t num_elements) {
-    static const unsigned char *ptr;
+// void correct_order(const void *input_ycbcr, unsigned char *output, size_t num_elements) {
+//     static const unsigned char *ptr;
+//     static size_t i;
+//     ptr = input_ycbcr;
+//     for (i = 0; i < num_elements; ++i, ptr += 3) {
+//         *output++ = *ptr;
+//     }
+//     ptr = input_ycbcr + 1;
+//     for (i = 0; i < num_elements; ++i, ptr += 3) {
+//         *output++ = *ptr;
+//     }
+//     ptr = input_ycbcr + 2;
+//     for (i = 0; i < num_elements; ++i, ptr += 3) {
+//         *output++ = *ptr;
+//     }
+// }
+
+void output_444(const colour *input, unsigned char *output, size_t num_pixels){
+    static const colour *ptr;
     static size_t i;
-    ptr = input_ycbcr;
-    for (i = 0; i < num_elements; ++i, ptr += 3) {
-        *output++ = *ptr;
+    ptr = input;
+    for (i = 0; i < num_pixels; ++i, ++ptr) {
+        *output++ = get_Y(*ptr);
     }
-    printf("i: %zu\n", i);
-    printf("output: %p, ptr: %p", output, ptr);
-    ptr = input_ycbcr + 1;
-    for (i = 0; i < num_elements; ++i, ptr += 3) {
-        *output++ = *ptr;
+    ptr = input;
+    for (i = 0; i < num_pixels; ++i, ++ptr) {
+        *output++ = get_Cb(*ptr);
     }
-    printf("i: %zu\n", i);
-    printf("output: %p, ptr: %p", output, ptr);
-    ptr = input_ycbcr + 2;
-    for (i = 0; i < num_elements; ++i, ptr += 3) {
-        *output++ = *ptr;
+    for (i = 0; i < num_pixels; ++i, ++input) {
+        *output++ = get_Cr(*input);
     }
-    printf("i: %zu\n", i);
-    printf("output: %p, ptr: %p", output, ptr);
+}
+
+void output_422(const colour *input, unsigned char *output, size_t num_pixels){
+    static const colour *ptr;
+    static size_t i;
+    static size_t half;
+    half = num_pixels/2; // num_pixels is guaranteed to be even
+    ptr = input;
+    for (i = 0; i < num_pixels; ++i, ++ptr) {
+        *output++ = get_Y(*ptr);
+    }
+    ptr = input;
+    for (i = 0; i < half; ++i, ptr += 2) {
+        *output++ = get_Cb_avg2(*ptr, *(ptr + 1));
+    }
+    for (i = 0; i < half; ++i, input += 2) {
+        *output++ = get_Cr_avg2(*input, *(input + 1));
+    }
+}
+
+void output_420(const colour *input, unsigned char *output, unsigned int width, unsigned int height){
+    static const colour *ptr;
+    static const colour *nxt;
+    static unsigned int half_w;
+    static unsigned int half_h;
+    static unsigned int num_pixels;
+    static unsigned int j;
+    static unsigned int i;
+    num_pixels = width*height;
+    half_w = width/2; // both width and height are guaranteed to be divisible by 2
+    half_h = height/2;
+    ptr = input;
+    for (i = 0; i < num_pixels; ++i, ++ptr) {
+        *output++ = get_Y(*ptr);
+    }
+    ptr = input;
+    nxt = input + width; // points to row "below" ptr
+    for (j = 0; j < half_h; ++j) {
+        for (i = 0; i < half_w; ++i, ptr += 2, nxt += 2) {
+            *output++ = get_Cb_avg4(*ptr, *(ptr + 1), *nxt, *(nxt + 1));
+        }
+        ptr += width;
+        nxt += width;
+    }
+    ptr = input;
+    nxt = input + width;
+    for (j = 0; j < half_h; ++j) {
+        for (i = 0; i < half_w; ++i, ptr += 2, nxt += 2) {
+            *output++ = get_Cr_avg4(*ptr, *(ptr + 1), *nxt, *(nxt + 1));
+        }
+        ptr += width;
+        nxt += width;
+    }
+}
+
+void output_411(const colour *input, unsigned char *output, size_t num_pixels){
+    static const colour *ptr;
+    static size_t i;
+    static size_t quarter;
+    quarter = num_pixels/4; // num_pixels is guaranteed to be divisible by 4
+    ptr = input;
+    for (i = 0; i < num_pixels; ++i, ++ptr) {
+        *output++ = get_Y(*ptr);
+    }
+    ptr = input;
+    for (i = 0; i < quarter; ++i, ptr += 4) {
+        *output++ = get_Cb_avg4(*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3));
+    }
+    for (i = 0; i < quarter; ++i, input += 4) {
+        *output++ = get_Cr_avg4(*input, *(input + 1), *(input + 2), *(input + 3));
+    }
+}
+
+/* 4:1:0 is not a good format - it has little support; not even VLC and ffmpeg can deal with it */
+void output_410(const colour *input, unsigned char *output, unsigned int width, unsigned int height){
+    static const colour *ptr;
+    static const colour *nxt;
+    static unsigned int quarter_w;
+    static unsigned int half_h;
+    static unsigned int num_pixels;
+    static unsigned int j;
+    static unsigned int i;
+    num_pixels = width*height;
+    quarter_w = width/4; // width will be divisible by 4
+    half_h = height/2; // height will be divisible by 2
+    ptr = input;
+    for (i = 0; i < num_pixels; ++i, ++ptr) {
+        *output++ = get_Y(*ptr);
+    }
+    ptr = input;
+    nxt = input + width; // points to row "below" ptr
+    for (j = 0; j < half_h; ++j) {
+        for (i = 0; i < quarter_w; ++i, ptr += 4, nxt += 4) {
+            *output++ = get_Cb_avg8(*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3), *nxt, *(nxt + 1), *(nxt + 2), *(nxt + 3));
+        }
+        ptr += width;
+        nxt += width;
+    }
+    ptr = input;
+    nxt = input + width;
+    for (j = 0; j < half_h; ++j) {
+        for (i = 0; i < quarter_w; ++i, ptr += 4, nxt += 4) {
+            *output++ = get_Cr_avg8(*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3), *nxt, *(nxt + 1), *(nxt + 2), *(nxt + 3));
+        }
+        ptr += width;
+        nxt += width;
+    }
+}
+
+static inline void start_frame(FILE *fp) {
+    // static const char frame[] = {'F', 'R', 'A', 'M', 'E', '\n'};
+    // fwrite(frame, sizeof(char), 6, fp);
+    fputs("FRAME\n", fp);
+}
+
+const char *get_cur_dir(void) {
+#ifndef _WIN32
+    static char *cwd;
+    static long MAX_CWD;
+    if ((MAX_CWD = pathconf(".", _PC_PATH_MAX)) == -1) {
+        MAX_CWD = 4096;
+    }
+    cwd = malloc(MAX_CWD);
+    if (!getcwd(cwd, MAX_CWD)) {
+        fprintf(stderr, "Directory was not specified, and current directory could not be obtained.\n");
+        abort();
+    }
+#else
+    static char cwd[MAX_PATH];
+    if (!GetCurrentDirectory(MAX_PATH, cwd)) {
+        fprintf(stderr, "Directory was not specified, and current directory could not be obtained.\n");
+        abort();
+    }
+#endif
+    return cwd;
+}
+
+_Noreturn void print_help(void) {
+    exit(0);
+}
+
+_Noreturn void log_non_numeric_error(const char *str) {
+    if (!str || !*str)
+        abort();
+    const char *ptr = str;
+    while (*ptr) {
+        if (!is_digit_c(*ptr))
+            fprintf(stderr, BOLD_TXT(RED_TXT("%c")), *ptr);
+        else
+            fprintf(stderr, GREEN_TXT("%c"), *ptr);
+        ++ptr;
+    }
+    fputc('\n', stderr);
+    while (*str) {
+        if (!is_digit_c(*str))
+            fprintf(stderr, BOLD_TXT(YELLOW_TXT("^")));
+        else
+            fprintf(stderr, UNDERLINED_TXT(CYAN_TXT("~")));
+        ++str;
+    }
+    fputc('\n', stderr);
+    abort();
+}
+
+_Noreturn void log_floating_error(const char *str, int pos) {
+    if (!str || !*str)
+        abort();
+    fprintf(stderr, GREEN_TXT("%*c") BOLD_TXT(RED_TXT("%s\n")), pos, '^', str);
+    abort();
+}
+
+void process_argv(int argc, char **argv, bool *del, bool *timed, bool *sized, bool *prog, const char **path_to_vid,
+                  const char **path_to_folder, long long *rate_num, long long *rate_denom, const char **subsampling) {
+    static char sub[] = "4:2:0";
+    *del = false;
+    *timed = false;
+    *sized = false;
+    *prog = false;
+    *path_to_vid = NULL;
+    *path_to_folder = NULL;
+    *rate_num = 30;
+    *rate_denom = 1;
+    *subsampling = sub;
+    if (argc == 1) {
+        goto end;
+    }
+    bool have_path = false;
+    for (unsigned int i = 0; i < argc; ++i, ++argv) {
+        if (have_path) {
+            *path_to_vid = *argv;
+            have_path = false;
+            continue;
+        }
+        if (equal(*argv, "-o")) {
+            if (i == argc - 1) {
+                fprintf(stderr, BOLD_TXT(RED_TXT("Error:")) UNDERLINED_TXT(BLUE_TXT(" no file specified after the"))
+                                YELLOW_TXT(" \"-o\" ") UNDERLINED_TXT(BLUE_TXT(" option.\n")));
+                abort();
+            }
+            have_path = true;
+            continue;
+        }
+        if (startswith_c(*argv, '-')) {
+            if (*(*argv + 1) == 0) {
+                fprintf(stderr, BOLD_TXT(RED_TXT("Error:")) UNDERLINED_TXT(BLUE_TXT(" invalid option specified:"))
+                                YELLOW_TXT(" \"%s\" ") UNDERLINED_TXT(BLUE_TXT(".\n")), *argv);
+                abort();
+            }
+            else if (*(*argv + 1) == '-') {
+                if (equal(*argv + 2, "help")) {
+                    print_help(); // exits program
+                }
+                fprintf(stderr, BOLD_TXT(RED_TXT("Error:")) UNDERLINED_TXT(BLUE_TXT(" invalid option specified:"))
+                                YELLOW_TXT(" \"%s\" ") UNDERLINED_TXT(BLUE_TXT(".\n")), *argv);
+                abort();
+            }
+            else if (*(*argv + 1) == 'h') {
+                if (*(*argv + 2) != 0) {
+                    fprintf(stderr, BOLD_TXT(RED_TXT("Error:"))
+                                    YELLOW_TXT(" \"-h\" ")
+                                    UNDERLINED_TXT(BLUE_TXT(" option must be specified on its own.\nInstead found:"))
+                                    YELLOW_TXT(" \"%s\" ") UNDERLINED_TXT(BLUE_TXT("after")) YELLOW_TXT(" \"-h\" "),
+                                    *argv + 2);
+                    abort();
+                }
+                print_help();
+            }
+            else if (startswith(*argv, "-fps")) {
+                if (*(*argv + 4) != '=' || *(*argv + 5) == 0) {
+                    fprintf(stderr, BOLD_TXT(RED_TXT("Error:"))
+                                    YELLOW_TXT(" \"-fps\" ")
+                                    UNDERLINED_TXT(BLUE_TXT(" (frames-per-second) option must be specified in the "
+                                                            "following format:\n")) YELLOW_TXT(" \"-fps=<num>\" ")
+                                    UNDERLINED_TXT(BLUE_TXT("or")) YELLOW_TXT(" \"-fps=<num>/<num>\" ")
+                                    UNDERLINED_TXT(BLUE_TXT("\nwhere ")) YELLOW_TXT(" \"<num>\" ")
+                                    UNDERLINED_TXT(BLUE_TXT("tag/s is/are replaced by a/two positive integer/s.\n"
+                                                            "Instead found: ")) YELLOW_TXT(" \"%s\" "), *argv + 4);
+                    abort();
+                }
+                const char *end_char;
+                *rate_num = to_ll(*argv + 5, &end_char);
+                if (end_char == *argv + 5 || (*end_char != 0 && *end_char != '/')) {
+                    fprintf(stderr, BOLD_TXT(RED_TXT("Error:"))
+                                    UNDERLINED_TXT(BLUE_TXT(" non-numeric characters were passed in the first "))
+                                    YELLOW_TXT(" \"<num>\" ")
+                                    UNDERLINED_TXT(BLUE_TXT("tag in the ")) YELLOW_TXT(" \"-fps=<num>\" ")
+                                    UNDERLINED_TXT(BLUE_TXT("or"))
+                                    YELLOW_TXT(" \"-fps=<num>/<num>\" ")
+                                    UNDERLINED_TXT(BLUE_TXT("argument:\n")));
+                    log_non_numeric_error(end_char);
+                }
+                if (*end_char == '/') {
+                    const char *second_end;
+                    *rate_denom = to_ll(end_char + 1, &second_end);
+                    if (*second_end == 0) {
+                        int char_count =
+                        fprintf(stderr,
+                                BOLD_TXT(RED_TXT("Error:"))
+                                UNDERLINED_TXT(BLUE_TXT(" no denominator value passed in"))
+                                YELLOW_TXT(" \"-fps=<num>/<num>\" ")
+                                YELLOW_TXT(" \"<num>\" ")
+                                UNDERLINED_TXT(BLUE_TXT("argument: ")) YELLOW_TXT(" \"-fps=<num>\" ")
+                                UNDERLINED_TXT(BLUE_TXT("or"))
+                                UNDERLINED_TXT(BLUE_TXT("argument:\n")));
+                        log_floating_error("Expected value", char_count);
+                    }
+                    else if (end_char + 1 == second_end) {
+                        fprintf(stderr, BOLD_TXT(RED_TXT("Error:"))
+                                        UNDERLINED_TXT(BLUE_TXT(" non-numeric characters were passed in the second "))
+                                        YELLOW_TXT(" \"<num>\" ")
+                                        UNDERLINED_TXT(BLUE_TXT("tag in the "))
+                                        YELLOW_TXT(" \"-fps=<num>/<num>\" ")
+                                        UNDERLINED_TXT(BLUE_TXT("argument:\n")));
+                        log_non_numeric_error(end_char);
+                    }
+                }
+                if (!*rate_num || rate_num < 0) {
+                    fprintf(stderr,
+                            BOLD_TXT(RED_TXT("Error:"))
+                            UNDERLINED_TXT(BLUE_TXT(" frame rate numerator determined to be zero or negative:"))
+                            GREEN_TXT(" %lld ")
+                            UNDERLINED_TXT(BLUE_TXT("\nDo not enter a value less than or equal to zero,"))
+                            UNDERLINED_TXT(BLUE_TXT(" or greater than \n"))
+                            YELLOW_TXT(" %lld\n"), *rate_num, LL_MAX);
+                    abort();
+                }
+                if (!*rate_denom || rate_denom < 0) {
+                    fprintf(stderr,
+                            BOLD_TXT(RED_TXT("Error:"))
+                            UNDERLINED_TXT(BLUE_TXT(" frame rate denominator determined to be zero or negative:"))
+                            GREEN_TXT(" %lld ")
+                            UNDERLINED_TXT(BLUE_TXT("\nDo not enter a value less than or equal to zero,"))
+                            UNDERLINED_TXT(BLUE_TXT(" or greater than \n"))
+                            YELLOW_TXT(" %lld\n"), *rate_num, LL_MAX);
+                    abort();
+                }
+            }
+        }
+    }
+    end:
+    *path_to_folder = get_cur_dir();
 }

@@ -3,33 +3,28 @@
 //
 
 #include "overhead.h"
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <sys/stat.h> // even though all these header files have been ported to Windows, they tend to be wrappers around
-#include <dirent.h> // native Windows API functions, so I prefer to use the Windows API functions directly when on Win.
-#include <unistd.h>
-#endif
-
-#include <signal.h>
 
 #define MIN_ARR_SIZE 128 // starting size of array to store bmp paths
 
 char *bmp_path = NULL; // global pointers, so they can be easily freed with a func. passed to atexit()
 char *path = NULL;
 const char **array = NULL;
-char *vid_path;
+char *vid_path = NULL;
 const char *yuv_h = NULL;
 colour *colours = NULL;
+unsigned char *final_clrs = NULL;
 
 void clean(void) {
     if (array)
         free_array(array);
-    free_ptrs(5, bmp_path, path, vid_path, yuv_h, colours);
+    free_ptrs(6, bmp_path, path, vid_path, yuv_h, colours, final_clrs);
 }
 
 _Noreturn void handler(int signal) {
     // clean();
+    fprintf(stderr, RED_TXT(BOLD_TXT("Program terminated due to abnormal circumstances.\n"))
+                    CYAN_TXT("Please use") BOLD_TXT(YELLOW_TXT(" \"--help\" "))
+                    CYAN_TXT("option for program usage and for troubleshooting.\n"));
     exit(1);
 }
 
@@ -44,12 +39,17 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Invalid number of command-line arguments provided.\n");
         return 1;
     }
-    bool delete = false;
-    bool timed = false;
-    bool give_size = false;
-    long long rate = 30; // default frame rate
+    bool delete = false; // whether to delete .bmp images as they are appended to the video
+    bool timed = false; // whether to display the time taken for the video generation
+    bool give_size = false; // whether to display the total file size of the video generated
+    bool prog = false; // whether to show the progress of the video generation
+    const char *path_to_vid_given = NULL; // path to the .y4m as given by the user - remains NULL if none given
+    const char *folder_path = NULL; // path to directory containing .bmp files - if none given, cwd is used
+    long long rate_num = 30; // default frame rate numerator
+    long long rate_denom = 1; // default frame rate denominator
     const char *cmpr = "4:2:0"; // default colour sub-sampling
     bool cmpr_set = false;
+    /*
     if (argc >= 3) {
         const char *fr = *(argv + 2);
         if (!is_numeric(fr)) {
@@ -117,6 +117,7 @@ int main(int argc, char **argv) {
             }
         }
     }
+     */
 #ifdef _WIN32
     DWORD fileAttr = GetFileAttributesA(*(argv + 1));
     if (fileAttr == INVALID_FILE_ATTRIBUTES) {
@@ -256,10 +257,10 @@ int main(int argc, char **argv) {
     char t[sizeof(char)*(UND_TIME_MAX_LEN + 12)];
     strcpy_c(t, "CREATED_ON=");
     strcat_c(t, curr_time);
-    yuv_h = yuv_header(width, height, rate, 1, 'p', 1, 1, clr_space, t);
+    yuv_h = yuv_header(width, height, rate_num, rate_denom, 'p', 1, 1, clr_space, t);
     if (yuv_h == NULL) {
         fprintf(stderr, "Invalid parameters for YUV4MPEG2 file.\n");
-        return 1;
+        abort();
     }
     vid_path = malloc(sizeof(char)*(len + UND_TIME_MAX_LEN + 15)); // path for generated .y4m file
     strcpy_c(vid_path, bmp_path);
@@ -282,22 +283,23 @@ int main(int argc, char **argv) {
     fwrite(yuv_h, sizeof(char), strlen_c(yuv_h), vid);
     free((char *) yuv_h);
     yuv_h = NULL;
-    const char *frame = "FRAME\n";
     long start_offset = -((long) (info_header.bmp_width*3 + padding)); // same for all colour sub-sampling cases
     long repeat_offset = -((long) ((width + info_header.bmp_width)*3 + padding));
-    colours = malloc(width*height*sizeof(unsigned char)); // I have opted for heap alloc. to avoid repeated calls to
+    colours = malloc(width*height*sizeof(colour)); // I have opted for heap alloc. to avoid repeated calls to
     if (!colours) { // fread(), the tests I have run have shown the comp. time to have been reduced by at least 60%
         fprintf(stderr, "Memory allocation error, likely due to overly large BMP file size.\n");
-        return 1;
+        abort();
     }
-    char *final_clrs = malloc(width*height*sizeof(unsigned char));
-    char *fclr_ptr = final_clrs;
+    unsigned char *fclr_ptr;
     colour *clr_ptr;
     unsigned int total_reps = width*height; // guaranteed to never be larger than 4294967295
     unsigned int i; // loop counter
+    size_t frame_size; // size of a single frame in the .y4m video
     if (strcmp_c(clr_space, "C444") == 0) { // uncompressed case - BMP pixel array size = FRAME pixel array size
+        frame_size = total_reps*sizeof(colour);
+        final_clrs = malloc(frame_size);
         for (;*arr; ++arr) { // lots of repetition below, but better to avoid function calls
-            fputs(frame, vid); // each frame starts with "FRAME\n"
+            start_frame(vid); // each frame starts with "FRAME\n"
             bmp = fopen(*arr, "rb");
             if (!bmp) {
                 fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
@@ -315,7 +317,7 @@ int main(int argc, char **argv) {
             if (delete) // not great to re-evaluate this within loop, but leads to cleaner code, and <0.0001% extra time
                 if (remove(*arr)) {
                     fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *arr);
-                    return 1;
+                    abort();
                 }
             clr_ptr = colours;
             // for (i = 0; i < total_reps; ++i) { // write Y plane
@@ -330,9 +332,9 @@ int main(int argc, char **argv) {
             //     fputc(get_Cr(*clr_ptr++), vid);
             // }
             fclr_ptr = final_clrs;
-            for_each(clr_ptr, sizeof(colour), total_reps, to_ycbcr);
-            correct_order((unsigned char *) clr_ptr, (unsigned char *) fclr_ptr, total_reps);
-            fwrite(fclr_ptr, sizeof(colour), total_reps, vid);
+            //for_each(clr_ptr, sizeof(colour), total_reps, to_ycbcr);
+            output_444(clr_ptr, fclr_ptr, total_reps);
+            fwrite(fclr_ptr, sizeof(unsigned char), frame_size, vid);
             // for (i = 0; i < total_reps; ++i) { // write Y plane
             //     fputc((*clr_ptr++).b, vid);
             // }
@@ -347,13 +349,15 @@ int main(int argc, char **argv) {
         }
     }
     else if (strcmp_c(clr_space, "C422") == 0) { // video frame size = (2/3) * BMP pixel array size
-        unsigned int half_reps = total_reps/2;
+        // unsigned int half_reps = total_reps/2;
+        frame_size = total_reps*2*sizeof(unsigned char);
+        final_clrs = malloc(frame_size);
         for (; *arr; ++arr) {
-            fputs(frame, vid);
+            start_frame(vid);
             bmp = fopen(*arr, "rb");
             if (!bmp) {
                 fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
-                return 1;
+                abort();
             }
             check_dim(bmp, *arr);
             fseek(bmp, start_offset, SEEK_END);
@@ -370,88 +374,42 @@ int main(int argc, char **argv) {
                     return 1;
                 }
             clr_ptr = colours;
-            for (i = 0; i < total_reps; ++i) { // write full Y plane
-                fputc(get_Y(*clr_ptr++), vid);
-            }
-            clr_ptr = colours;
-            for (i = 0; i < half_reps; ++i) { // write 'half' Cb plane, since 2 pixels share same Cb comp.
-                fputc(get_Cb_avg2(*clr_ptr, *(clr_ptr + 1)), vid); // can't use ++ inside func call here - UB
-                clr_ptr += 2;
-            }
-            clr_ptr = colours;
-            for (i = 0; i < half_reps; ++i) { // same as for Cb plane
-                fputc(get_Cr_avg2(*clr_ptr, *(clr_ptr + 1)), vid);
-                clr_ptr += 2;
-            }
+            fclr_ptr = final_clrs;
+            output_422(clr_ptr, fclr_ptr, total_reps);
+            fwrite(fclr_ptr, sizeof(unsigned char), frame_size, vid);
+            // for (i = 0; i < total_reps; ++i) { // write full Y plane
+            //     fputc(get_Y(*clr_ptr++), vid);
+            // }
+            // clr_ptr = colours;
+            // for (i = 0; i < half_reps; ++i) { // write 'half' Cb plane, since 2 pixels share same Cb comp.
+            //     fputc(get_Cb_avg2(*clr_ptr, *(clr_ptr + 1)), vid); // can't use ++ inside func call here - UB
+            //     clr_ptr += 2;
+            // }
+            // clr_ptr = colours;
+            // for (i = 0; i < half_reps; ++i) { // same as for Cb plane
+            //     fputc(get_Cr_avg2(*clr_ptr, *(clr_ptr + 1)), vid);
+            //     clr_ptr += 2;
+            // }
         }
     } // 4:2:0 sub-sampling is, in my opinion, the best choice, as quality is decent, and file size is cut in half
     else if (strcmp_c(clr_space, "C420") == 0) { // video frame size = (1/2) * BMP pixel array size
         if (height != info_header.bmp_height) {
             start_offset -= (long) (padding + 3*info_header.bmp_width);
         }
-        unsigned int half_width = width/2;
-        unsigned int half_height = height/2; // no 0.5 truncation, width and height are guaranteed to be even by here
-        colour *next;
-        unsigned int j; // nested loop counter
+        //unsigned int half_width = width/2;
+        //unsigned int half_height = height/2; // no 0.5 truncation, width and height are guaranteed to be even by here
+        //colour *next;
+        //unsigned int j; // nested loop counter
+        frame_size = (total_reps*3)/2;
+        fclr_ptr = malloc(frame_size);
         for (; *arr; ++arr) {
-            fputs(frame, vid);
+            start_frame(vid);
             bmp = fopen(*arr, "rb");
             if (!bmp) {
                 fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
-                return 1;
+                abort();
             }
             check_dim(bmp, *arr);
-            fseek(bmp, start_offset, SEEK_END);
-            clr_ptr = colours;
-            for (i = 0; i < height; ++i) {
-                fread(clr_ptr, sizeof(colour), width, bmp);
-                fseek(bmp, repeat_offset, SEEK_CUR);
-                clr_ptr += width;
-            }
-            fclose(bmp);
-            if (delete) // not great to re-evaluate this within loop, but leads to cleaner code, and <0.0001% extra time
-                if (remove(*arr)) {
-                    fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *arr);
-                    return 1;
-                }
-            clr_ptr = colours;
-            for (i = 0; i < total_reps; ++i) { // write full Y plane
-                fputc(get_Y(*clr_ptr++), vid);
-            }
-            clr_ptr = colours;
-            next = colours + width; // pointer to the pixel 'below' the pixel pointed to by clr_ptr
-            for (i = 0; i < half_height; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
-                for (j = 0; j < half_width; ++j) { // better not to avoid nested loop here
-                    fputc(get_Cb_avg4(*clr_ptr, *(clr_ptr + 1), *next, *(next + 1)), vid);
-                    clr_ptr += 2;
-                    next += 2;
-                }
-                clr_ptr += width; // 'move' both pointers down by 1 row
-                next += width;
-            }
-            clr_ptr = colours;
-            next = colours + width;
-            for (i = 0; i < half_height; ++i) { // same as for Cb plane
-                for (j = 0; j < half_width; ++j) {
-                    fputc(get_Cr_avg4(*clr_ptr, *(clr_ptr + 1), *next, *(next + 1)), vid);
-                    clr_ptr += 2;
-                    next += 2;
-                }
-                clr_ptr += width;
-                next += width;
-            }
-        }
-    }
-    else if (strcmp_c(clr_space, "C411") == 0) { // C411 - video frame size = (1/2) * BMP pixel array size
-        unsigned int quarter_reps = total_reps/4; // no truncation, total_reps guaranteed to be multiple of 4 by here
-        for (; *arr; ++arr) {
-            fputs(frame, vid);
-            bmp = fopen(*arr, "rb");
-            if (!bmp) {
-                fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
-                return 1;
-            }
-            check_dim(bmp, *arr++);
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
             for (i = 0; i < height; ++i) {
@@ -463,22 +421,79 @@ int main(int argc, char **argv) {
             if (delete)
                 if (remove(*arr)) {
                     fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *arr);
-                    return 1;
+                    abort();
                 }
             clr_ptr = colours;
-            for (i = 0; i < total_reps; ++i) { // write full Y plane
-                fputc(get_Y(*clr_ptr++), vid);
+            output_420(clr_ptr, fclr_ptr, width, height);
+            fwrite(fclr_ptr, sizeof(unsigned char), frame_size, vid);
+            // for (i = 0; i < total_reps; ++i) { // write full Y plane
+            //     fputc(get_Y(*clr_ptr++), vid);
+            // }
+            // clr_ptr = colours;
+            // next = colours + width; // pointer to the pixel 'below' the pixel pointed to by clr_ptr
+            // for (i = 0; i < half_height; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
+            //     for (j = 0; j < half_width; ++j) { // better not to avoid nested loop here
+            //         fputc(get_Cb_avg4(*clr_ptr, *(clr_ptr + 1), *next, *(next + 1)), vid);
+            //         clr_ptr += 2;
+            //         next += 2;
+            //     }
+            //     clr_ptr += width; // 'move' both pointers down by 1 row
+            //     next += width;
+            // }
+            // clr_ptr = colours;
+            // next = colours + width;
+            // for (i = 0; i < half_height; ++i) { // same as for Cb plane
+            //     for (j = 0; j < half_width; ++j) {
+            //         fputc(get_Cr_avg4(*clr_ptr, *(clr_ptr + 1), *next, *(next + 1)), vid);
+            //         clr_ptr += 2;
+            //         next += 2;
+            //     }
+            //     clr_ptr += width;
+            //     next += width;
+            // }
+        }
+    }
+    else if (strcmp_c(clr_space, "C411") == 0) { // C411 - video frame size = (1/2) * BMP pixel array size
+        // unsigned int quarter_reps = total_reps/4; // no truncation, total_reps guaranteed to be multiple of 4 by here
+        frame_size = (total_reps*3)/2;
+        fclr_ptr = malloc(frame_size);
+        for (; *arr; ++arr) {
+            start_frame(vid);
+            bmp = fopen(*arr, "rb");
+            if (!bmp) {
+                fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
+                abort();
             }
+            check_dim(bmp, *arr);
+            fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
-            for (i = 0; i < quarter_reps; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
-                fputc(get_Cb_avg4(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3)), vid);
-                clr_ptr += 4;
+            for (i = 0; i < height; ++i) {
+                fread(clr_ptr, sizeof(colour), width, bmp);
+                fseek(bmp, repeat_offset, SEEK_CUR);
+                clr_ptr += width;
             }
+            fclose(bmp);
+            if (delete)
+                if (remove(*arr)) {
+                    fprintf(stderr, "Error occurred when trying to delete file \"%s\".\n", *arr);
+                    abort();
+                }
             clr_ptr = colours;
-            for (i = 0; i < quarter_reps; ++i) { // same as for Cb plane
-                fputc(get_Cr_avg4(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3)), vid);
-                clr_ptr += 4;
-            }
+            output_411(clr_ptr, fclr_ptr, total_reps);
+            fwrite(fclr_ptr, sizeof(unsigned char), frame_size, vid);
+            // for (i = 0; i < total_reps; ++i) { // write full Y plane
+            //     fputc(get_Y(*clr_ptr++), vid);
+            // }
+            // clr_ptr = colours;
+            // for (i = 0; i < quarter_reps; ++i) { // write 1/4 Cb plane, since 4 pixels share same Cb comp.
+            //     fputc(get_Cb_avg4(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3)), vid);
+            //     clr_ptr += 4;
+            // }
+            // clr_ptr = colours;
+            // for (i = 0; i < quarter_reps; ++i) { // same as for Cb plane
+            //     fputc(get_Cr_avg4(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3)), vid);
+            //     clr_ptr += 4;
+            // }
         }
     }
     /* warning: to the best of my knowledge, 4:1:0 subsampling is not supported by any media player, not even VLC, and
@@ -488,18 +503,20 @@ int main(int argc, char **argv) {
         if (height != info_header.bmp_height) {
             start_offset -= (long) (padding + 3*info_header.bmp_width);
         }
-        unsigned int quarter_width = width/4; // no truncation, width is multiple of 4 by here
-        unsigned int half_height = height/2; // height is even by here
-        colour *next;
-        unsigned int j; // nested loop counter
+        // unsigned int quarter_width = width/4; // no truncation, width is multiple of 4 by here
+        // unsigned int half_height = height/2; // height is even by here
+        // colour *next;
+        // unsigned int j; // nested loop counter
+        frame_size = (5*total_reps)/4;
+        fclr_ptr = malloc(frame_size);
         for (; *arr; ++arr) {
-            fputs(frame, vid);
+            start_frame(vid);
             bmp = fopen(*arr, "rb");
             if (!bmp) {
                 fprintf(stderr, "File \"%s\" could not be opened.\n", *arr);
-                return 1;
+                abort();
             }
-            check_dim(bmp, *arr++);
+            check_dim(bmp, *arr);
             fseek(bmp, start_offset, SEEK_END);
             clr_ptr = colours;
             for (i = 0; i < height; ++i) {
@@ -514,37 +531,41 @@ int main(int argc, char **argv) {
                     return 1;
                 }
             clr_ptr = colours;
-            for (i = 0; i < total_reps; ++i) { // write full Y plane
-                fputc(get_Y(*clr_ptr++), vid);
-            }
-            clr_ptr = colours;
-            next = colours + width; // pointer to the pixel 'below' the pixel pointed to by clr_ptr
-            for (i = 0; i < half_height; ++i) { // write 1/8 Cb plane, since 8 pixels share same Cb comp.
-                for (j = 0; j < quarter_width; ++j) { // better not to avoid nested loop here
-                    fputc(get_Cb_avg8(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3),
-                                      *next, *(next + 1), *(next + 2), *(next + 3)), vid);
-                    clr_ptr += 4;
-                    next += 4;
-                }
-                clr_ptr += width; // 'move' both pointers down by 1 row
-                next += width;
-            }
-            clr_ptr = colours;
-            next = colours + width;
-            for (i = 0; i < half_height; ++i) { // same as for Cb plane
-                for (j = 0; j < quarter_width; ++j) {
-                    fputc(get_Cr_avg8(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3),
-                                      *next, *(next + 1), *(next + 2), *(next + 3)), vid);
-                    clr_ptr += 4;
-                    next += 4;
-                }
-                clr_ptr += width;
-                next += width;
-            }
+            output_410(clr_ptr, fclr_ptr, width, height);
+            fwrite(fclr_ptr, sizeof(unsigned char), frame_size, vid);
+            // for (i = 0; i < total_reps; ++i) { // write full Y plane
+            //     fputc(get_Y(*clr_ptr++), vid);
+            // }
+            // clr_ptr = colours;
+            // next = colours + width; // pointer to the pixel 'below' the pixel pointed to by clr_ptr
+            // for (i = 0; i < half_height; ++i) { // write 1/8 Cb plane, since 8 pixels share same Cb comp.
+            //     for (j = 0; j < quarter_width; ++j) { // better not to avoid nested loop here
+            //         fputc(get_Cb_avg8(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3),
+            //                           *next, *(next + 1), *(next + 2), *(next + 3)), vid);
+            //         clr_ptr += 4;
+            //         next += 4;
+            //     }
+            //     clr_ptr += width; // 'move' both pointers down by 1 row
+            //     next += width;
+            // }
+            // clr_ptr = colours;
+            // next = colours + width;
+            // for (i = 0; i < half_height; ++i) { // same as for Cb plane
+            //     for (j = 0; j < quarter_width; ++j) {
+            //         fputc(get_Cr_avg8(*clr_ptr, *(clr_ptr + 1), *(clr_ptr + 2), *(clr_ptr + 3),
+            //                           *next, *(next + 1), *(next + 2), *(next + 3)), vid);
+            //         clr_ptr += 4;
+            //         next += 4;
+            //     }
+            //     clr_ptr += width;
+            //     next += width;
+            // }
         }
     }
     free(colours);
     colours = NULL;
+    free(final_clrs);
+    final_clrs = NULL;
     size_t y4m_file_size = ftell(vid); // will be very big!!!
     fclose(vid);
     // arr = array;
