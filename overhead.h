@@ -304,7 +304,7 @@ long long to_ll(const char *str, const char **end_char) {
         ++str;
         if (!*str) {
             if (end_char)
-                *end_char = --str;
+                *end_char = str - 1;
             return LL_MIN;
         }
         negative = true;
@@ -333,7 +333,7 @@ size_t strlen_c(const char *str) {
     return count;
 }
 
-int strcmp_c(const char *restrict str1, const char *str2) {
+int strcmp_c(const char *str1, const char *str2) {
     if (!str1 || !str2) {
         return -128;
     }
@@ -358,15 +358,11 @@ static inline bool startswith_c(const char *str1, char c) {
 bool startswith(const char *str, const char *substr) {
     if (!str || !substr)
         return false;
-    size_t slen = strlen_c(str);
-    size_t sublen = strlen_c(substr);
-    if (slen < sublen)
-        return false;
     while (*str && *substr) {
         if (*str++ != *substr++)
             return false;
     }
-    return true;
+    return *substr == 0; // in case substr was longer than str
 }
 
 int alfcmp_c(const char *restrict str1, const char *str2) { // treats upper and lower-case letters equally
@@ -676,23 +672,6 @@ void to_ycbcr(void *bgr) {
     col->g = Cb;
 }
 
-// void correct_order(const void *input_ycbcr, unsigned char *output, size_t num_elements) {
-//     static const unsigned char *ptr;
-//     static size_t i;
-//     ptr = input_ycbcr;
-//     for (i = 0; i < num_elements; ++i, ptr += 3) {
-//         *output++ = *ptr;
-//     }
-//     ptr = input_ycbcr + 1;
-//     for (i = 0; i < num_elements; ++i, ptr += 3) {
-//         *output++ = *ptr;
-//     }
-//     ptr = input_ycbcr + 2;
-//     for (i = 0; i < num_elements; ++i, ptr += 3) {
-//         *output++ = *ptr;
-//     }
-// }
-
 void output_444(const colour *input, unsigned char *output, size_t num_pixels){
     static const colour *ptr;
     static size_t i;
@@ -822,6 +801,14 @@ static inline void start_frame(FILE *fp) {
     fputs("FRAME\n", fp);
 }
 
+static inline char file_sep(void) {
+#ifndef _WIN32
+    return '/';
+#else
+    return '\\';
+#endif
+}
+
 const char *get_cur_dir(void) {
 #ifndef _WIN32
     static char *cwd;
@@ -845,13 +832,20 @@ const char *get_cur_dir(void) {
 }
 
 _Noreturn void print_help(void) {
+    printf("Help\n");
     exit(0);
 }
 
-_Noreturn void log_non_numeric_error(const char *str) {
+_Noreturn void print_version(void) {
+    printf("Version\n");
+    exit(0);
+}
+
+_Noreturn void log_non_numeric_error(const char *str) {//, size_t start_index) {
     if (!str || !*str)
         abort();
     const char *ptr = str;
+    fputs("\t\t", stderr);
     while (*ptr) {
         if (!is_digit_c(*ptr))
             fprintf(stderr, BOLD_TXT(RED_TXT("%c")), *ptr);
@@ -859,7 +853,7 @@ _Noreturn void log_non_numeric_error(const char *str) {
             fprintf(stderr, GREEN_TXT("%c"), *ptr);
         ++ptr;
     }
-    fputc('\n', stderr);
+    fputs("\n\t\t", stderr);
     while (*str) {
         if (!is_digit_c(*str))
             fprintf(stderr, BOLD_TXT(YELLOW_TXT("^")));
@@ -871,16 +865,48 @@ _Noreturn void log_non_numeric_error(const char *str) {
     abort();
 }
 
+_Noreturn void print_nonnum_fps(const char *str) {
+    if (!str || !*str)
+        abort();
+    const char *ptr = str;
+    fputs("\t\t", stderr);
+    size_t count = 0;
+    bool init_slash = *(str + 5) == '/' || *(str + strlen_c(str) - 1) == '/';
+    bool have_slash = init_slash;
+    while (*ptr) {
+        if (!is_digit_c(*ptr) && count >= 5)
+            fprintf(stderr, *ptr != '/' ? BOLD_TXT(RED_TXT("%c")) :
+            (!have_slash ? have_slash = true, GREEN_TXT("%c") : BOLD_TXT(RED_TXT("%c"))), *ptr);
+        else
+            fprintf(stderr, GREEN_TXT("%c"), *ptr);
+        ++ptr;
+        ++count;
+    }
+    fputs("\n\t\t", stderr);
+    count = 0;
+    while (*str) {
+        if (!is_digit_c(*str) && count >= 5)
+            fprintf(stderr, (init_slash ? BOLD_TXT(YELLOW_TXT("^")) :
+            (*str == '/' ? init_slash = true, CYAN_TXT("~") : BOLD_TXT(YELLOW_TXT("^")))));
+        else
+            fprintf(stderr, CYAN_TXT("~"));
+        ++str;
+        ++count;
+    }
+    fputc('\n', stderr);
+    abort();
+}
+
 _Noreturn void log_floating_error(const char *str, int pos) {
     if (!str || !*str)
         abort();
-    fprintf(stderr, GREEN_TXT("%*c") BOLD_TXT(RED_TXT("%s\n")), pos, '^', str);
+    fprintf(stderr, GREEN_TXT("\t\t%*c") BOLD_TXT(RED_TXT(" %s\n")), pos, '^', str);
     abort();
 }
 
 void process_argv(int argc, char **argv, bool *del, bool *timed, bool *sized, bool *prog, const char **path_to_vid,
                   const char **path_to_folder, long long *rate_num, long long *rate_denom, const char **subsampling) {
-    static char sub[] = "4:2:0";
+    static char sub[] = "420";
     *del = false;
     *timed = false;
     *sized = false;
@@ -891,10 +917,12 @@ void process_argv(int argc, char **argv, bool *del, bool *timed, bool *sized, bo
     *rate_denom = 1;
     *subsampling = sub;
     if (argc == 1) {
-        goto end;
+        *path_to_folder = get_cur_dir();
+        return;
     }
+    ++argv;
     bool have_path = false;
-    for (unsigned int i = 0; i < argc; ++i, ++argv) {
+    for (unsigned int i = 1; i < argc; ++i, ++argv) {
         if (have_path) {
             *path_to_vid = *argv;
             have_path = false;
@@ -915,15 +943,19 @@ void process_argv(int argc, char **argv, bool *del, bool *timed, bool *sized, bo
                                 YELLOW_TXT(" \"%s\" ") UNDERLINED_TXT(BLUE_TXT(".\n")), *argv);
                 abort();
             }
-            else if (*(*argv + 1) == '-') {
-                if (equal(*argv + 2, "help")) {
+            if (*(*argv + 1) == '-') {
+                if (equal(*argv + 2, "help") || equal(*argv + 2, "h")) {
                     print_help(); // exits program
                 }
-                fprintf(stderr, BOLD_TXT(RED_TXT("Error:")) UNDERLINED_TXT(BLUE_TXT(" invalid option specified:"))
-                                YELLOW_TXT(" \"%s\" ") UNDERLINED_TXT(BLUE_TXT(".\n")), *argv);
-                abort();
+                if (equal(*argv + 2, "version") || equal(*argv + 2, "v")) {
+                    print_version();
+                }
+                fprintf(stderr, BOLD_TXT(RED_TXT("Error:")) UNDERLINED_TXT(BLUE_TXT(" invalid option specified:\n")));
+                int char_count =
+                fprintf(stderr, GREEN_TXT("\t\t\"%s\"\n"), *argv);
+                log_floating_error("Expected flag", char_count - 2);
             }
-            else if (*(*argv + 1) == 'h') {
+            if (*(*argv + 1) == 'h') {
                 if (*(*argv + 2) != 0) {
                     fprintf(stderr, BOLD_TXT(RED_TXT("Error:"))
                                     YELLOW_TXT(" \"-h\" ")
@@ -934,8 +966,8 @@ void process_argv(int argc, char **argv, bool *del, bool *timed, bool *sized, bo
                 }
                 print_help();
             }
-            else if (startswith(*argv, "-fps")) {
-                if (*(*argv + 4) != '=' || *(*argv + 5) == 0) {
+            if (startswith(*argv, "-fps")) {
+                if (*(*argv + 4) == 0 || *(*argv + 4) != '=' || *(*argv + 5) == 0) {
                     fprintf(stderr, BOLD_TXT(RED_TXT("Error:"))
                                     YELLOW_TXT(" \"-fps\" ")
                                     UNDERLINED_TXT(BLUE_TXT(" (frames-per-second) option must be specified in the "
@@ -943,7 +975,7 @@ void process_argv(int argc, char **argv, bool *del, bool *timed, bool *sized, bo
                                     UNDERLINED_TXT(BLUE_TXT("or")) YELLOW_TXT(" \"-fps=<num>/<num>\" ")
                                     UNDERLINED_TXT(BLUE_TXT("\nwhere ")) YELLOW_TXT(" \"<num>\" ")
                                     UNDERLINED_TXT(BLUE_TXT("tag/s is/are replaced by a/two positive integer/s.\n"
-                                                            "Instead found: ")) YELLOW_TXT(" \"%s\" "), *argv + 4);
+                                                            "Instead found: ")) YELLOW_TXT(" \"%s\"\n"), *argv);
                     abort();
                 }
                 const char *end_char;
@@ -956,31 +988,29 @@ void process_argv(int argc, char **argv, bool *del, bool *timed, bool *sized, bo
                                     UNDERLINED_TXT(BLUE_TXT("or"))
                                     YELLOW_TXT(" \"-fps=<num>/<num>\" ")
                                     UNDERLINED_TXT(BLUE_TXT("argument:\n")));
-                    log_non_numeric_error(end_char);
+                    print_nonnum_fps(*argv);
                 }
                 if (*end_char == '/') {
-                    const char *second_end;
-                    *rate_denom = to_ll(end_char + 1, &second_end);
-                    if (*second_end == 0) {
-                        int char_count =
+                    if (*(end_char + 1) == 0) {
                         fprintf(stderr,
                                 BOLD_TXT(RED_TXT("Error:"))
                                 UNDERLINED_TXT(BLUE_TXT(" no denominator value passed in"))
                                 YELLOW_TXT(" \"-fps=<num>/<num>\" ")
-                                YELLOW_TXT(" \"<num>\" ")
-                                UNDERLINED_TXT(BLUE_TXT("argument: ")) YELLOW_TXT(" \"-fps=<num>\" ")
-                                UNDERLINED_TXT(BLUE_TXT("or"))
                                 UNDERLINED_TXT(BLUE_TXT("argument:\n")));
-                        log_floating_error("Expected value", char_count);
+                        int char_count =
+                        fprintf(stderr, "\t\t%s\n", *argv);
+                        log_floating_error("Expected value", char_count - 2);
                     }
-                    else if (end_char + 1 == second_end) {
+                    const char *second_end;
+                    *rate_denom = to_ll(end_char + 1, &second_end);
+                    if (end_char + 1 == second_end || *second_end != 0) {
                         fprintf(stderr, BOLD_TXT(RED_TXT("Error:"))
                                         UNDERLINED_TXT(BLUE_TXT(" non-numeric characters were passed in the second "))
                                         YELLOW_TXT(" \"<num>\" ")
                                         UNDERLINED_TXT(BLUE_TXT("tag in the "))
                                         YELLOW_TXT(" \"-fps=<num>/<num>\" ")
                                         UNDERLINED_TXT(BLUE_TXT("argument:\n")));
-                        log_non_numeric_error(end_char);
+                        print_nonnum_fps(*argv);
                     }
                 }
                 if (!*rate_num || rate_num < 0) {
@@ -1003,9 +1033,69 @@ void process_argv(int argc, char **argv, bool *del, bool *timed, bool *sized, bo
                             YELLOW_TXT(" %lld\n"), *rate_num, LL_MAX);
                     abort();
                 }
+                continue;
             }
+            if (startswith(*argv, "-sub") || startswith(*argv, "-clr")) {
+                if (*(*argv + 4) != '=' || *(*argv + 5) == 0) {
+                    fprintf(stderr, BOLD_TXT(RED_TXT("Error:"))
+                                    YELLOW_TXT(" \"-sub\" ") UNDERLINED_TXT(BLUE_TXT("or")) YELLOW_TXT(" \"-clr\" ")
+                                    UNDERLINED_TXT(BLUE_TXT(" (color-subsampling) option must be specified in the "
+                                                            "following format:\n")) YELLOW_TXT(" \"-fps=<num>\" ")
+                                    UNDERLINED_TXT(BLUE_TXT("\nwhere the ")) YELLOW_TXT(" \"<num>\" ")
+                                    UNDERLINED_TXT(BLUE_TXT("tag is replaced by one of:\n"))
+                                    YELLOW_TXT("\t\"444\n\"")
+                                    YELLOW_TXT("\t\"422\n\"")
+                                    YELLOW_TXT("\t\"420\n\"")
+                                    YELLOW_TXT("\t\"411\"") BLUE_TXT(" or\n")
+                                    YELLOW_TXT("\t\"410\n\"") UNDERLINED_TXT(BLUE_TXT(" (not recommended)\n"))
+                                    UNDERLINED_TXT(BLUE_TXT("Instead found: "))
+                                    YELLOW_TXT(" \"%s\"\n"), *argv + 4);
+                    abort();
+                }
+                if (!equal(*argv + 5, "444") && !equal(*argv + 5, "422") && !equal(*argv + 5, "420") &&
+                    !equal(*argv + 5, "411") && !equal(*argv + 5, "410")) {
+                    fprintf(stderr, BOLD_TXT(RED_TXT("Error:"))
+                    UNDERLINED_TXT(BLUE_TXT("invalid color-subsampling option:\n")));
+                    fprintf(stderr, "\t\t%s", *argv);
+                    log_floating_error("Expected "
+                                       YELLOW_TXT("\"444\"") BLUE_TXT(", ")
+                                       YELLOW_TXT("\"422\"") BLUE_TXT(", ")
+                                       YELLOW_TXT("\"420\"") BLUE_TXT(", ")
+                                       YELLOW_TXT("\"411\"") BLUE_TXT(" or ")
+                                       YELLOW_TXT("\"410\"\n"), 5);
+                }
+                strcpy_c(sub, *argv + 5);
+                continue;
+            }
+            char *ptr = *argv + 1;
+            for (size_t count = 1; *ptr; ++count, ++ptr) {
+                if (*ptr == 'd') {
+                    *del = true;
+                    continue;
+                }
+                if (*ptr == 'p') {
+                    *prog = true;
+                    continue;
+                }
+                if (*ptr == 't') {
+                    *timed = true;
+                    continue;
+                }
+                if (*ptr == 's') {
+                    *sized = true;
+                    continue;
+                }
+                if (*ptr == 'h') {
+                    fprintf(stderr, RED_TXT(BOLD_TXT("Error:")) GREEN_TXT("\t\t%s\n"), *argv);
+                    log_floating_error("must be specified as single option\n", count + 1);
+                }
+                fprintf(stderr, RED_TXT(BOLD_TXT("Error:")) GREEN_TXT("\t\t%s\n"), *argv);
+                log_floating_error("invalid flag\n", count + 1);
+            }
+            continue;
         }
+        *path_to_folder = *argv;
     }
-    end:
-    *path_to_folder = get_cur_dir();
+    if (!*path_to_folder)
+        *path_to_folder = get_cur_dir();
 }
